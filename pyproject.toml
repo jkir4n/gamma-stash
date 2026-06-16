@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamma-mods-downloader"
+version = "2.0.0"
+description = "Batch download G.A.M.M.A. mods using the official mods.txt manifest from ModDB and GitHub"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Hermes Agent / Nous Research"},
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+gamma-mods-downloader = "gamma_mods_downloader.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gamma_mods_downloader*"]
