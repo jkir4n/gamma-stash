@@ -11,15 +11,13 @@
 - **Interactive setup wizard** — checks dependencies, auto-installs missing tools via `winget`, configures Flaresolverr (manual IP or Docker self-host)
 - **MD5-aware scanning** — checks existing files against expected hashes, skips already-downloaded mods
 - **Cloudflare bypass** — MODDB downloads via Flaresolverr; GitHub downloads directly
-- **Live progress bars** — download speed, file size, and percentage during transfers
 - **Auto-cleanup** — after downloads, offers to stop/remove Docker containers and uninstall Docker
-- **Zero persistence** — no config files, no leftover state; every run is self-contained
 
 ## Quick Start
 
 ### Download
 
-Grab the latest `gamma-stash.exe` from [Releases](https://github.com/your-org/gamma-stash/releases).
+Grab the latest `gamma-stash.exe` from [Releases](https://github.com/jkir4n/gamma-stash/releases).
 
 ### Run
 
@@ -29,7 +27,7 @@ Double-click `gamma-stash.exe` — the setup wizard walks you through everything
 2. **Flaresolverr setup** — enter IP of an existing instance, or let the tool self-host via Docker
 3. **Locate GAMMA** — point it at your GAMMA installation folder (e.g., `D:\GAMMA`)
 4. **Scan modlist** — MD5-checks every downloaded file, shows what's missing
-5. **Download** — fetches only the mods you need with live progress bars
+5. **Download** — fetches only the mods you need
 6. **Cleanup** — optionally removes Docker containers and Docker itself
 
 ### Command Line
