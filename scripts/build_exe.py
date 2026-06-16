@@ -37,22 +37,27 @@ def main() -> int:
         "-m",
         "PyInstaller",
         "--onefile",
-        "--name", "gamma-mods-downloader",
+        "--name", "gamma-stash",
         "--console",
         "--clean",
         "--noconfirm",
         "--distpath", DIST_DIR,
         "--workpath", BUILD_DIR,
         "--specpath", BUILD_DIR,
-        os.path.join(PROJECT_ROOT, "gamma_mods_downloader", "__main__.py"),
     ]
+
+    icon_path = os.path.join(PROJECT_ROOT, "icon.ico")
+    if os.path.isfile(icon_path):
+        cmd += ["--icon", icon_path]
+
+    cmd.append(os.path.join(PROJECT_ROOT, "gamma_mods_downloader", "__main__.py"))
 
     print("Running:", " ".join(cmd))
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     if result.returncode != 0:
         return result.returncode
 
-    exe = "gamma-mods-downloader.exe" if sys.platform == "win32" else "gamma-mods-downloader"
+    exe = "gamma-stash.exe" if sys.platform == "win32" else "gamma-stash"
     exe_path = os.path.join(DIST_DIR, exe)
     if os.path.exists(exe_path):
         print(f"\nBuilt: {exe_path}")

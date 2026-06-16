@@ -3,9 +3,9 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gamma-mods-downloader"
-version = "0.0.0"
-description = "Batch download G.A.M.M.A. mods using the official mods.txt manifest from ModDB and GitHub"
+name = "gamma-stash"
+version = "0.1.0"
+description = "G.A.M.M.A. STASH — Batch download G.A.M.M.A. mods using the official mods.txt manifest"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-gamma-mods-downloader = "gamma_mods_downloader.cli:main"
+gamma-stash = "gamma_mods_downloader.cli:main"
 
 [project.optional-dependencies]
 build = [

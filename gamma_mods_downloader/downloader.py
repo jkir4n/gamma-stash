@@ -1,23 +1,28 @@
 """
-Links file parser for the Gamma Mods Downloader.
+Links file parser + downloader for the Gamma Mods Downloader.
 
 Handles GAMMA's official mods.txt format (tab-separated):
   URL\tinstall_path\t - author\tdescription\tmoddb_page_url\tfilename\tMD5
 
 Lines starting with a bare category name (no URL) are category headers.
-Some entries lack an MD5 checksum (field 7 missing).
 """
 
 import hashlib
 import os
+import subprocess
+import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import load_config
+from .terminal import (
+    GREEN, AMBER, RED, CYAN, GRAY, DARK_GRAY, WHITE, DIM, BOLD, RESET,
+    ProgressBar, Spinner, BOX_H,
+    print_ok, print_error, print_warn, print_info, print_field, print_divider,
+)
 
 
 def md5_file(path: str) -> str:
-    """Compute MD5 hash of a file."""
     h = hashlib.md5()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -34,32 +39,22 @@ CATEGORY_PATTERNS = [
 
 
 def _is_category_header(line: str) -> bool:
-    """Check if a line is a bare category header (no URL)."""
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
         return True
-    # Lines without http(s) are category headers or blank
     if not stripped.startswith("http"):
         return True
     return False
 
 
 def _parse_entry(line: str) -> Optional[Dict[str, str]]:
-    """
-    Parse a single tab-separated mod entry line.
-    Fields: URL | install_path | - author | description | moddb_page_url | filename | MD5
-
-    Returns None if the line is a category header or blank.
-    """
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
         return None
     if _is_category_header(stripped):
-        # This is a category header, not an entry
         return None
 
     parts = stripped.split("\t")
-
     if len(parts) < 1:
         return None
 
@@ -67,12 +62,10 @@ def _parse_entry(line: str) -> Optional[Dict[str, str]]:
     if not url.startswith("http"):
         return None
 
-    # Defaults
     install_path = parts[1].strip() if len(parts) > 1 else ""
     author_raw = parts[2].strip() if len(parts) > 2 else ""
     description = parts[3].strip() if len(parts) > 3 else ""
 
-    # Clean up author (remove leading "- ")
     author = author_raw
     if author.startswith("- "):
         author = author[2:]
@@ -84,12 +77,9 @@ def _parse_entry(line: str) -> Optional[Dict[str, str]]:
     filename = parts[5].strip() if len(parts) > 5 else ""
     expected_md5 = parts[6].strip() if len(parts) > 6 else ""
 
-    # Determine source
     source = "GITHUB" if "github.com" in url.lower() else "MODDB"
 
-    # Generate a safe filename if none provided
     if not filename:
-        # Extract from URL
         url_parts = url.rstrip("/").split("/")
         filename = url_parts[-1] if url_parts else "unknown.zip"
         if not filename:
@@ -103,14 +93,13 @@ def _parse_entry(line: str) -> Optional[Dict[str, str]]:
         "moddb_page": moddb_page,
         "filename": filename,
         "expected_md5": expected_md5,
-        "actual_md5": "",  # Will be filled after download
+        "actual_md5": "",
         "source": source,
         "status": "PENDING",
     }
 
 
 def format_entry(entry: Dict[str, str]) -> str:
-    """Format a single entry back to tab-separated line."""
     parts = [
         entry["url"],
         entry.get("install_path", ""),
@@ -123,16 +112,31 @@ def format_entry(entry: Dict[str, str]) -> str:
     return "\t".join(parts)
 
 
+def _format_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.0f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _format_speed(bytes_per_sec: float) -> str:
+    if bytes_per_sec < 1024:
+        return f"{bytes_per_sec:.0f} B/s"
+    elif bytes_per_sec < 1024 * 1024:
+        return f"{bytes_per_sec / 1024:.0f} KB/s"
+    else:
+        return f"{bytes_per_sec / (1024 * 1024):.1f} MB/s"
+
+
 class LinksFile:
-    """
-    Manages GAMMA's mods.txt file -- tab-separated, with category headers.
-    """
+    """Manages GAMMA's mods.txt file -- tab-separated, with category headers."""
 
     def __init__(self, local_path: str):
         self.local_path = local_path
 
     def read(self) -> List[Dict[str, str]]:
-        """Parse the mods.txt file and return a list of entry dicts."""
         content = self._read_content()
         entries = []
         for line in content.splitlines():
@@ -142,11 +146,6 @@ class LinksFile:
         return entries
 
     def read_with_categories(self) -> Tuple[List[str], List[List[Dict[str, str]]]]:
-        """
-        Parse mods.txt preserving category structure.
-        Returns (categories, entries_by_category) where each category entry
-        is a list of mod entries under that category.
-        """
         content = self._read_content()
         categories: List[str] = []
         entries_by_cat: List[List[Dict[str, str]]] = []
@@ -158,7 +157,6 @@ class LinksFile:
             if not stripped or stripped.startswith("#"):
                 continue
             if _is_category_header(stripped):
-                # Only add the previous category if it had entries
                 if current_entries:
                     entries_by_cat.append(current_entries)
                     categories.append(current_cat)
@@ -170,7 +168,6 @@ class LinksFile:
             if entry:
                 current_entries.append(entry)
 
-        # Don't forget last category
         if current_entries:
             entries_by_cat.append(current_entries)
             categories.append(current_cat)
@@ -178,23 +175,13 @@ class LinksFile:
         return categories, entries_by_cat
 
     def _read_content(self) -> str:
-        """Read the links file from local disk."""
         with open(self.local_path, "r") as f:
             return f.read()
 
     def update_entry_status(self, entries: List[Dict[str, str]]) -> bool:
-        """
-        Rewrite mods.txt with updated actual_md5 and status fields.
-        Since mods.txt only has expected_md5 (field 7), we store actual_md5
-        in the expected_md5 slot for entries that were previously missing it,
-        or update status by appending a comment after the line.
-        """
-        # TODO: For now, status is tracked in a separate tracking file
-        # since mods.txt doesn't have a natural place for status/actual_md5
         pass
 
     def status_summary(self) -> Tuple[int, int, int, int, int]:
-        """Return (total, downloaded, pending, moddb, github) counts."""
         entries = self.read()
         total = len(entries)
         downloaded = sum(1 for e in entries if e["status"] == "DOWNLOADED")
@@ -213,7 +200,6 @@ class Downloader:
         self.delay = config.get("download_delay", 2)
         self.max_concurrent = config.get("max_concurrent", 1)
 
-        # Set up Flaresolverr (only needed for MODDB entries)
         self.flare = None
         fs_cfg = config.get("flaresolverr", {})
         if fs_cfg.get("url"):
@@ -223,56 +209,56 @@ class Downloader:
                 timeout_ms=fs_cfg.get("timeout_ms", 60000),
             )
         else:
-            print("WARN: No Flaresolverr configured -- MODDB downloads will fail")
+            print_warn("No Flaresolverr configured -- MODDB downloads will fail")
 
-        # Set up links file
         self.links = LinksFile(local_path=config["links_file"])
-
         os.makedirs(self.download_dir, exist_ok=True)
 
     def download_entry(self, entry: Dict[str, str]) -> bool:
-        """
-        Download a single PENDING entry, verify MD5, copy to destination.
-
-        Returns True on success, False on failure.
-        """
         url = entry["url"]
         filename = entry["filename"]
         expected_md5 = entry.get("expected_md5", "")
         source = entry.get("source", "MODDB")
         local_path = os.path.join(self.download_dir, filename)
 
-        print(f"\n{'='*60}")
-        print(f"File: {filename}")
-        print(f"Description: {entry.get('description', 'N/A')}")
-        print(f"Author: {entry.get('author', 'N/A')}")
-        if expected_md5:
-            print(f"Expected MD5: {expected_md5}")
-        else:
-            print(f"Expected MD5: (none -- will skip verification)")
-        print(f"Source: {source}")
+        # Print file header
+        desc = entry.get("description", "") or filename
+        author = entry.get("author", "")
+        src_tag = f"{CYAN}GH{RESET}" if source == "GITHUB" else f"{AMBER}MDB{RESET}"
 
-        # Check if already downloaded locally with correct MD5
+        print(f"\n  {BOLD}{filename}{RESET}")
+        if desc and desc != filename:
+            print(f"  {DIM}{desc}{RESET}")
+        if author:
+            print(f"  {DIM}by {author}{RESET}  [{src_tag}]")
+        else:
+            print(f"  [{src_tag}]")
+        if expected_md5:
+            print(f"  {DIM}MD5: {expected_md5[:16]}...{RESET}")
+
+        # Check if already downloaded
         if os.path.exists(local_path):
             if expected_md5:
+                spinner = Spinner(f"Checking existing file ...")
+                spinner.start()
                 actual_md5 = md5_file(local_path)
                 if actual_md5 == expected_md5:
-                    print(f"  OK: Already downloaded with correct MD5")
+                    spinner.stop("OK")
                     entry["actual_md5"] = actual_md5
                     if self._copy_to_destination(local_path, filename):
                         entry["status"] = "DOWNLOADED"
                         return True
                 else:
-                    print(f"  WARN: Local MD5 mismatch (got {actual_md5}), re-downloading")
+                    spinner.stop(None)
+                    print_warn(f"MD5 mismatch (got {actual_md5[:16]}...), re-downloading")
             else:
-                # No MD5 to verify -- skip redownload if file exists and has size
                 if os.path.getsize(local_path) > 100:
-                    print(f"  OK: Already exists (no MD5 to verify)")
+                    print_ok("Already exists (no MD5 to verify)")
                     if self._copy_to_destination(local_path, filename):
                         entry["status"] = "DOWNLOADED"
                         return True
 
-        # Download based on source
+        # Download
         if source == "GITHUB":
             ok = self._download_github(url, local_path)
         else:
@@ -281,114 +267,114 @@ class Downloader:
         if not ok:
             return False
 
-        size_kb = os.path.getsize(local_path) / 1024
-        print(f"  OK: Downloaded: {size_kb:.0f} KB")
-
-        # Verify MD5 (if we have one)
+        # Post-download MD5 verification
         if expected_md5:
+            spinner = Spinner("Verifying MD5 ...")
+            spinner.start()
             actual_md5 = md5_file(local_path)
             entry["actual_md5"] = actual_md5
             if actual_md5 != expected_md5:
-                print(f"  ERROR: MD5 MISMATCH: expected {expected_md5}, got {actual_md5}")
+                spinner.fail(f"expected {expected_md5[:16]}..., got {actual_md5[:16]}...")
                 os.remove(local_path)
                 return False
-            print(f"  OK: MD5 OK")
+            spinner.stop("OK")
         else:
-            print(f"  WARN: No MD5 to verify -- skipped")
             entry["actual_md5"] = md5_file(local_path)
 
-        # Copy to destination
         if self._copy_to_destination(local_path, filename):
             entry["status"] = "DOWNLOADED"
             return True
-        else:
-            return False
+        return False
 
     def _download_moddb(self, url: str, local_path: str) -> bool:
-        """Download a MODDB-hosted file via Flaresolverr."""
         if not self.flare:
-            print(f"  ERROR: Flaresolverr not configured, cannot download MODDB link")
+            print_error("Flaresolverr not configured, cannot download MODDB link")
             return False
 
-        import subprocess
-
-        print(f"  Resolving ModDB page via Flaresolverr...")
+        spinner = Spinner("Resolving ModDB page via Flaresolverr ...")
+        spinner.start()
         try:
             result = self.flare.resolve(url)
         except Exception as e:
-            print(f"  ERROR: Flaresolverr error: {e}")
+            spinner.fail(str(e))
             return False
 
         sol = result.get("solution", {})
         html = sol.get("response", "")
 
-        # Extract mirror download URL
         mirror_url = self.flare.extract_mirror_url(html)
         if not mirror_url:
-            print(f"  ERROR: Could not extract mirror link from page")
+            spinner.fail("Could not extract mirror link")
             return False
 
+        spinner.stop("OK")
         cookies = sol.get("cookies", [])
         user_agent = sol.get("userAgent", "")
 
-        # Download the file
-        print(f"  Downloading from mirror...")
-        cookie_header = self.flare.build_cookie_header(cookies)
-
-        cmd = [
-            "curl", "-sL",
-            "-A", user_agent,
-            "-H", f"Cookie: {cookie_header}",
-            "-o", local_path,
-            "-w", "%{http_code}",
-            "--max-time", "120",
-            mirror_url,
-        ]
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
-            http_code = result.stdout.strip()
-        except Exception as e:
-            print(f"  ERROR: Download failed: {e}")
-            return False
-
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
-            return True
-
-        print(f"  ERROR: Download failed (HTTP {http_code})")
-        return False
+        return self._curl_download(mirror_url, local_path, user_agent,
+                                   self.flare.build_cookie_header(cookies))
 
     def _download_github(self, url: str, local_path: str) -> bool:
-        """Download a GitHub-hosted file directly (no Flaresolverr needed)."""
-        import subprocess
+        return self._curl_download(url, local_path)
 
-        print(f"  Downloading from GitHub...")
-        # GitHub downloads work with -L (follow redirects)
-        cmd = [
-            "curl", "-sL",
-            "-o", local_path,
-            "-w", "%{http_code}",
-            "--max-time", "120",
-            url,
-        ]
+    def _curl_download(self, url: str, local_path: str,
+                       user_agent: str = "", cookie: str = "") -> bool:
+        filename = os.path.basename(local_path)
+        if len(filename) > 35:
+            filename = filename[:32] + "..."
+
+        cmd = ["curl", "-sL", "-o", local_path, "-w", "%{http_code}", "--max-time", "600", url]
+        if user_agent:
+            cmd.insert(1, user_agent)
+            cmd.insert(1, "-A")
+        if cookie:
+            cmd.insert(1, f"Cookie: {cookie}")
+            cmd.insert(1, "-H")
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
-            http_code = result.stdout.strip()
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         except Exception as e:
-            print(f"  ERROR: Download failed: {e}")
+            print_error(f"Failed to start download: {e}")
             return False
+
+        start_time = time.time()
+        last_size = 0
+        last_time = start_time
+        bar = ProgressBar(100, width=28, label=f"{CYAN}{filename}{RESET}")
+
+        while proc.poll() is None:
+            time.sleep(0.3)
+            if os.path.exists(local_path):
+                current_size = os.path.getsize(local_path)
+                now = time.time()
+                elapsed = now - start_time
+                dt = now - last_time
+
+                if dt >= 0.5 and current_size > last_size:
+                    speed_bps = (current_size - last_size) / dt if dt > 0 else 0
+                    speed_str = _format_speed(speed_bps)
+                    size_str = _format_size(current_size)
+                    pct = min(int(current_size / max(current_size + speed_bps * 10, 1) * 100), 99)
+                    bar.update(pct, f"{GREEN}{size_str}{RESET}  {GRAY}{speed_str}{RESET}")
+                    last_size = current_size
+                    last_time = now
+
+        http_code = proc.stdout.read().strip() if proc.stdout else "0"
+        bar.done(f"{GREEN}{_format_size(os.path.getsize(local_path) if os.path.exists(local_path) else 0)}{RESET}")
 
         if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
             return True
 
-        print(f"  ERROR: Download failed (HTTP {http_code})")
+        print_error(f"Download failed (HTTP {http_code})")
         return False
 
     def _copy_to_destination(self, local_path: str, filename: str) -> bool:
-        """Copy a downloaded file to its configured local destination."""
         import shutil
         dest_dir = self.config["destination"]["local_path"]
+
+        if os.path.normpath(local_path) == os.path.normpath(os.path.join(dest_dir, filename)):
+            return True
+
         os.makedirs(dest_dir, exist_ok=True)
         dest = os.path.join(dest_dir, filename)
 
@@ -400,28 +386,29 @@ class Downloader:
                 counter += 1
 
         shutil.copy2(local_path, dest)
-        print(f"  OK: Copied to: {dest}")
         return True
 
-    def download_all(self) -> Dict[str, int]:
-        """Download all PENDING entries. Returns {success, fail, total_pending}."""
+    def download_all(self, skip_filenames: Optional[frozenset] = None) -> Dict[str, int]:
         entries = self.links.read()
-        pending = [e for e in entries if e["status"] == "PENDING"]
-        total, dl, pend, moddb, github = self.links.status_summary()
+        pending_all = [e for e in entries if e["status"] == "PENDING"]
+        if skip_filenames:
+            pending = [e for e in pending_all if e["filename"] not in skip_filenames]
+        else:
+            pending = pending_all
 
-        print(f"\n Total: {total} | DOWNLOADED: {dl} | PENDING: {pend}")
-        print(f"   MODDB: {moddb} | GITHUB: {github}")
+        print(f"\n  {BOLD}Downloading{RESET}  {GRAY}{len(pending)} mods{RESET}")
+        print_divider()
 
         if not pending:
-            print("Nothing to download!")
+            print_ok("Nothing to download!")
             return {"success": 0, "fail": 0, "total_pending": 0}
 
         success = 0
         fail = 0
+        total = len(pending)
         progress_file = os.path.join(self.download_dir, "_progress.txt")
 
         for i, entry in enumerate(pending, 1):
-            print(f"\n--- [{i}/{len(pending)}] ---")
             ok = self.download_entry(entry)
             if ok:
                 success += 1
@@ -429,12 +416,13 @@ class Downloader:
                 fail += 1
 
             with open(progress_file, "w") as pf:
-                pf.write(f"{i}/{len(pending)} | OK:{success} FAIL:{fail}\n")
+                pf.write(f"{i}/{total} | OK:{success} FAIL:{fail}\n")
 
-            if i < len(pending):
+            if i < total:
                 time.sleep(self.delay)
 
-        print(f"\n{'='*60}")
-        print(f" DONE: {success} OK, {fail} FAIL of {len(pending)} PENDING")
-
-        return {"success": success, "fail": fail, "total_pending": len(pending)}
+        print_divider()
+        ok_str = f"{GREEN}{success} OK{RESET}"
+        fail_str = f"{RED}{fail} FAIL{RESET}" if fail > 0 else ""
+        print(f"\n  {BOLD}Done:{RESET} {ok_str}  {fail_str}  {GRAY}of {total}{RESET}\n")
+        return {"success": success, "fail": fail, "total_pending": total}

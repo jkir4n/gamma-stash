@@ -1,4 +1,4 @@
-# Agent Notes — Gamma Mods Downloader
+# Agent Notes — G.A.M.M.A. STASH
 
 Small Python 3.9+ CLI for batch-downloading G.A.M.M.A. mods. No test suite, no CI, no linter/formatter config.
 
@@ -9,12 +9,13 @@ pip install .
 # or
 pip install -r requirements.txt
 
-gamma-mods-downloader --help
+gamma-stash --help
 python -m gamma_mods_downloader --help
 ```
 
 - Entry point: `gamma_mods_downloader.cli:main`
 - `GMD_DEBUG=1` prints full tracebacks; otherwise errors print a one-line message.
+- `--version` / `-V` prints version info.
 
 ## Build a single-file executable
 
@@ -23,12 +24,14 @@ pip install .[build]
 python scripts/build_exe.py
 ```
 
-Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-downloader` (Linux/macOS). The executable still requires `curl` on `PATH`; Flaresolverr is needed only for MODDB downloads.
+Produces `dist/gamma-stash.exe` (Windows) or `dist/gamma-stash` (Linux/macOS). The executable still requires `curl` on `PATH`; Flaresolverr is needed only for MODDB downloads.
 
 ## CLI commands
 
 | Command | Notes |
 |---------|-------|
+| _(none)_ | Auto-detects state and either runs the setup wizard or shows `status`. Use this as the default entrypoint for the executable. |
+| `setup` | Interactive first-run wizard: checks deps (curl, docker), configures Flaresolverr (manual IP entry or Docker self-host), locates GAMMA folder (manual entry, validates mods.txt), shows modlist stats, confirms, downloads. Writes `config.yaml` using GAMMA's `downloads/` folder as both `download_dir` and `destination.local_path`. |
 | `init` | Writes `config.yaml` in cwd (fails if already exists). Auto-detects GAMMA `mods.txt` from hard-coded Windows paths (`D:\GAMMA\...`, `C:\GAMMA\...`) and falls back to `mods.txt`. Also writes `tracking_file` key (unused). |
 | `status` | Prints totals + category breakdown. |
 | `list` | Supports `--pending`, `--moddb`, `--github`, `--verbose`. |
@@ -39,6 +42,7 @@ Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-download
 - **PyYAML** — only runtime dependency (`requirements.txt`).
 - **curl** — invoked via `subprocess` for all downloads; must be on `PATH`.
 - **Flaresolverr** — required only for MODDB links; GitHub links download directly.
+- **Docker** — optional; needed only if user chooses to self-host Flaresolverr via the setup wizard.
 
 ## Links file format (important)
 
@@ -61,7 +65,7 @@ Fields: `URL \t install_path \t - author \t description \t moddb_page_url \t fil
 
 Load order: `--config` → `./config.yaml` → `~/.config/gamma-mods-downloader/config.yaml` → package-parent `config.yaml`.
 
-The README mentions `./gamma-mods-downloader.yaml` and `/etc/...` — these are **not** in the code. The README's `--version` / `-V` flag is also not implemented.
+The README mentions `./gamma-mods-downloader.yaml` and `/etc/...` — these are **not** in the code. 
 
 Environment overrides use `GMD_*` prefix (e.g. `GMD_FLARESOLVERR_URL`). See `_apply_env_overrides` in `config.py:112` for the full mapping — values are cast to bool/int based on the default's type.
 
@@ -85,6 +89,9 @@ tracking_file: ""             # reserved, not actively used
 - **Status is not persisted back to `mods.txt`.** `LinksFile.update_entry_status()` is a no-op TODO. After `download`, the file is not rewritten; status exists only in memory.
 - `max_concurrent` is read from config but has no effect — downloads run one at a time.
 - **`destination.local_path` defaults to `download_dir`** when empty (see `config.py:142`). If you don't explicitly set it in config, the "final destination" is the same as the temp download directory.
+- **The setup wizard sets both `download_dir` and `destination.local_path` to GAMMA's `downloads/` folder.** Downloaded mods land directly in GAMMA's download directory.
+- **MD5-based skip:** Before downloading, the downloader checks if the file already exists in `download_dir`. If MD5 matches, the download is skipped. If MD5 mismatches, it re-downloads. (See `downloader.py:256`.)
+- **`_copy_to_destination` is a no-op when paths match.** When `download_dir == destination.local_path`, no file copy occurs (`downloader.py:390`).
 - For MODDB downloads, Flaresolverr must return a `/downloads/mirror/<hash>` link in the page HTML; mirror extraction is a single regex (`flaresolverr_client.py:74`).
 - Downloads skip files smaller than ~100 bytes and treat them as failures.
 - `download_all` writes progress to `_progress.txt` in `download_dir` after each entry (simple `N/M | OK:X FAIL:Y` format).

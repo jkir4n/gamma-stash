@@ -24,4 +24,4 @@ jobs:
         run: pip install .
 
       - name: Smoke test
-        run: gamma-mods-downloader --help
+        run: gamma-stash --version

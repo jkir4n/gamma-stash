@@ -1,264 +1,100 @@
-# Gamma Mods Downloader
+# G.A.M.M.A. STASH
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Batch download **G.A.M.M.A.** mods from ModDB with automated Cloudflare bypass, MD5 verification, and status tracking.
+**G.A.M.M.A. STASH** is a Windows CLI tool that batch-downloads S.T.A.L.K.E.R. G.A.M.M.A. mods using the official `mods.txt` manifest from your GAMMA installation.
 
 ---
 
 ## Features
 
-- 🛡️ **Cloudflare bypass** — Flaresolverr handles JS challenges automatically
-- 🔐 **MD5 verification** — Every download is checksum-verified before marking complete
-- 📋 **Status tracking** — Links file (URL | Filename | MD5 | Status) keeps a clear record of what's done and what's pending
-- 🌐 **Local destination** — Save completed mods to a local folder
-- ⚙️ **Configurable** — YAML config file with environment variable overrides
-
----
-
-## Requirements
-
-- **Python 3.9+**
-- **Flaresolverr** — A running instance (Docker is easiest)
-- **curl** — Used for actual file downloads (more reliable for large files than `urllib`)
-
----
+- **Interactive setup wizard** — checks dependencies, auto-installs missing tools via `winget`, configures Flaresolverr (manual IP or Docker self-host)
+- **MD5-aware scanning** — checks existing files against expected hashes, skips already-downloaded mods
+- **Cloudflare bypass** — MODDB downloads via Flaresolverr; GitHub downloads directly
+- **Live progress bars** — download speed, file size, and percentage during transfers
+- **Auto-cleanup** — after downloads, offers to stop/remove Docker containers and uninstall Docker
+- **Zero persistence** — no config files, no leftover state; every run is self-contained
 
 ## Quick Start
 
-### 1. Install
+### Download
+
+Grab the latest `gamma-stash.exe` from [Releases](https://github.com/your-org/gamma-stash/releases).
+
+### Run
+
+Double-click `gamma-stash.exe` — the setup wizard walks you through everything:
+
+1. **Dependency check** — ensures `curl` is on PATH (auto-installs via winget if missing)
+2. **Flaresolverr setup** — enter IP of an existing instance, or let the tool self-host via Docker
+3. **Locate GAMMA** — point it at your GAMMA installation folder (e.g., `D:\GAMMA`)
+4. **Scan modlist** — MD5-checks every downloaded file, shows what's missing
+5. **Download** — fetches only the mods you need with live progress bars
+6. **Cleanup** — optionally removes Docker containers and Docker itself
+
+### Command Line
+
+```
+gamma-stash             Run the setup + download wizard
+gamma-stash setup        Same as above
+gamma-stash cleanup      Stop/remove Flaresolverr container, uninstall Docker
+gamma-stash --version    Show version
+gamma-stash --help       Show help
+```
+
+## Requirements
+
+- Windows 10 or later
+- `curl` — included with Windows 10+; auto-installed via winget if missing
+- Flaresolverr — enter an existing instance IP, or let the tool self-host via Docker
+- Docker Desktop (optional) — only needed if you choose self-hosted Flaresolverr
+
+## How It Works
+
+1. Parses your GAMMA `mods.txt` (tab-separated format: `URL | install_path | author | description | moddb_page | filename | MD5`)
+2. For each mod, checks if the file already exists in `downloads/` with the correct MD5 — skips if match
+3. Downloads missing files:
+   - **MODDB links** → resolves via Flaresolverr (Cloudflare bypass), extracts mirror URL, downloads with `curl`
+   - **GitHub links** → downloads directly with `curl`
+4. Verifies MD5 after download, deletes and retries on mismatch
+
+## Building from Source
 
 ```bash
-# Clone or copy the project, then:
-pip install .
+pip install .[build]
+python scripts/build_exe.py
 ```
 
-Or install dependencies manually:
+Produces `dist/gamma-stash.exe`.
+
+To generate the icon:
 
 ```bash
-pip install -r requirements.txt
+pip install Pillow
+python scripts/generate_icon.py
 ```
-
-### 2. Start Flaresolverr
-
-```bash
-docker run -d --name flaresolverr -p 8191:8191 flaresolverr/flaresolverr
-```
-
-### 3. Create config
-
-```bash
-gamma-mods-downloader init
-```
-
-Edit the generated `config.yaml` for your setup.
-
-### 4. Prepare your links file
-
-Create a `jdownloader_links.txt` file with your mods:
-
-```
-# Format: URL | Filename | Expected MD5 | Status
-https://www.moddb.com/addons/start/XXXXX | SomeMod.zip | abcdef1234567890abcdef1234567890 | PENDING
-https://www.moddb.com/addons/start/YYYYY | AnotherMod.7z | 1234567890abcdef1234567890abcdef | DOWNLOADED
-```
-
-> **Getting MD5 hashes:** Download a file manually once, then run `md5sum filename` (Linux/macOS) or `certutil -hashfile filename MD5` (Windows). Add the hash to prevent re-downloading it.
-
-### 5. Check status
-
-```bash
-gamma-mods-downloader status
-```
-
-### 6. Download!
-
-```bash
-gamma-mods-downloader download
-```
-
----
-
-## Usage
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `init` | Create a sample `config.yaml` |
-| `status` | Show download summary (total / downloaded / pending) |
-| `list` | List every entry with its status |
-| `download` | Download all pending mods |
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-c, --config PATH` | Path to config file (default: auto-detect) |
-| `-V, --version` | Show version |
-
-### Examples
-
-```bash
-# Show status with a custom config
-gamma-mods-downloader -c /path/to/config.yaml status
-
-# List all pending downloads
-gamma-mods-downloader list | grep PENDING
-
-# Download with defaults
-gamma-mods-downloader download
-```
-
----
-
-## Configuration
-
-### Lookup order
-
-1. Path from `--config` CLI argument
-2. `./config.yaml` (current directory)
-3. `./gamma-mods-downloader.yaml`
-4. `~/.config/gamma-mods-downloader/config.yaml`
-5. `/etc/gamma-mods-downloader/config.yaml`
-
-### Full config reference
-
-```yaml
-# Flaresolverr service (required)
-flaresolverr:
-  url: "http://localhost:8191/v1"
-  timeout_ms: 60000
-
-# Path to your mods list file
-links_file: "jdownloader_links.txt"
-
-# Temporary download directory
-download_dir: "./downloads"
-
-# Destination for completed downloads
-destination:
-  local_path: "./completed"    # local destination
-
-# Download behaviour
-download_delay: 2              # seconds between downloads (be nice to ModDB)
-max_concurrent: 1              # sequential only (default)
-```
-
-### Environment variable overrides
-
-All config values can be overridden via environment variables. Prefix with `GMD_`:
-
-```bash
-export GMD_FLARESOLVERR_URL="http://192.168.1.50:8191/v1"
-export GMD_DOWNLOAD_DIR="/tmp/mods"
-gamma-mods-downloader download
-```
-
-Full list of env vars:
-
-| Variable | Overrides |
-|----------|-----------|
-| `GMD_FLARESOLVERR_URL` | `flaresolverr.url` |
-| `GMD_FLARESOLVERR_TIMEOUT` | `flaresolverr.timeout_ms` |
-| `GMD_LINKS_FILE` | `links_file` |
-| `GMD_DOWNLOAD_DIR` | `download_dir` |
-| `GMD_DEST_LOCAL_PATH` | `destination.local_path` |
-| `GMD_PROXY` | `proxy` |
-| `GMD_MAX_CONCURRENT` | `max_concurrent` |
-| `GMD_DOWNLOAD_DELAY` | `download_delay` |
-
----
 
 ## Project Structure
 
 ```
-gamma-mods-downloader/
-├── README.md                     # This file
-├── pyproject.toml                # Python package metadata
-├── requirements.txt              # Dependencies
-├── config.yaml                   # User configuration (generate with init)
-├── gamma_mods_downloader/
-│   ├── __init__.py               # Package metadata
-│   ├── __main__.py               # `python -m gamma_mods_downloader` support
-│   ├── cli.py                    # CLI entry point
-│   ├── config.py                 # Config loading (YAML + env vars)
-│   ├── flaresolverr_client.py    # Flaresolverr API client
-│   └── downloader.py             # Main download logic
-├── sample_data/
-│   └── jdownloader_links_sample.txt
-└── scripts/
-    └── download_all.sh            # Convenience launcher
+gamma_mods_downloader/
+├── cli.py                      CLI entry point + commands
+├── setup.py                    Interactive setup wizard
+├── terminal.py                 STALKER-themed colors, spinners, progress bars
+├── downloader.py               Mods.txt parser + download engine + MD5 verifier
+├── flaresolverr_client.py      Flaresolverr API client
+├── config.py                   Config loading (YAML, env vars)
+├── __init__.py                 Package metadata (version, app name)
+└── __main__.py                 python -m support
+
+scripts/
+├── build_exe.py                PyInstaller single-file build
+└── generate_icon.py            Icon generator
+
+.github/workflows/
+├── ci.yml                      CI: install + smoke test on Python 3.9-3.13
+└── release.yml                 Build exe on tag push, attach to GitHub Release
 ```
-
----
-
-## How It Works
-
-1. **Parse** — Reads your `jdownloader_links.txt` and identifies `PENDING` entries
-2. **Resolve** — For each pending mod, sends the ModDB URL to Flaresolverr, which runs the Cloudflare JS challenge and returns the resolved page with cookies
-3. **Extract** — Parses the ModDB page HTML to find the mirror download link
-4. **Download** — Downloads the file using `curl` with the Flaresolverr-provided cookies and User-Agent
-5. **Verify** — Computes the MD5 of the downloaded file and compares it against the expected hash
-6. **Deliver** — Copies the verified file to the local destination folder
-7. **Track** — Updates the links file status from `PENDING` to `DOWNLOADED`
-
----
-
-## Architecture
-
-```
-┌────────────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│  Gamma Mods        │────▶│  Flaresolverr    │────▶│  ModDB / Mod     │
-│  Downloader        │     │  (Docker)        │     │  Download Page   │
-│                    │◀────│  resolves JS     │◀────│  (Cloudflare)    │
-│  - CLI entry point │     │  challenges      │     └──────────────────┘
-│  - Config loader   │     └─────────────────┘
-│  - Download engine │              │
-│  - MD5 verifier    │              ▼
-└────────────────────┘     ┌─────────────────┐
-                           │  curl download   │
-          │                │  from mirror     │
-          ▼                └─────────────────┘
-┌────────────────────┐              │
-│  Links File        │              ▼
-│  (status tracking) │     ┌─────────────────┐
-└────────────────────┘     │  MD5 verify     │
-                            └─────────────────┘
-                                     │
-                                     ▼
-                            ┌─────────────────┐
-                            │  Destination    │
-                            │  (local)        │
-                            └─────────────────┘
-```
-
----
-
-## Troubleshooting
-
-### Flaresolverr won't start
-
-Make sure Docker is installed and the port isn't taken:
-
-```bash
-# Check if it's running
-curl http://localhost:8191/v1
-# Expected: {"msg":"FlareSolverr is ready.","startTime":...,"version":"..."}
-```
-
-### Downloads fail with HTTP 403
-
-- Flaresolverr might be overloaded. Increase `timeout_ms` (try 90000)
-- ModDB might have rate-limited you. Increase `download_delay` (try 5-10 seconds)
-- Check that Flaresolverr can reach the internet: `docker logs flaresolverr`
-
-### MD5 mismatch
-
-- The file on ModDB might have been updated. Check the mod page for version changes
-- Manually download and re-compute the MD5: `md5sum downloaded_file.zip`
-
----
 
 ## License
 

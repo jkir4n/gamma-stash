@@ -29,15 +29,15 @@ jobs:
         shell: bash
         run: |
           OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          echo "artifact=gamma-mods-downloader-${{ github.ref_name }}-${OS}" >> $GITHUB_OUTPUT
+          echo "artifact=gamma-stash-${{ github.ref_name }}-${OS}" >> $GITHUB_OUTPUT
 
       - name: Rename artifact (Linux/macOS)
         if: runner.os != 'Windows'
-        run: mv dist/gamma-mods-downloader "dist/${{ steps.name.outputs.artifact }}"
+        run: mv dist/gamma-stash "dist/${{ steps.name.outputs.artifact }}"
 
       - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
-        run: Rename-Item -Path dist/gamma-mods-downloader.exe -NewName "${{ steps.name.outputs.artifact }}.exe"
+        run: Rename-Item -Path dist/gamma-stash.exe -NewName "${{ steps.name.outputs.artifact }}.exe"
 
       - uses: softprops/action-gh-release@v2
         with:
