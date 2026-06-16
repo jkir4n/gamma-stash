@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: pip install .[build]
+
+      - name: Build executable
+        run: python scripts/build_exe.py
+
+      - name: Set artifact name
+        id: name
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          echo "artifact=gamma-mods-downloader-${{ github.ref_name }}-${OS}" >> $GITHUB_OUTPUT
+
+      - name: Rename artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: mv dist/gamma-mods-downloader "dist/${{ steps.name.outputs.artifact }}"
+
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        run: Rename-Item -Path dist/gamma-mods-downloader.exe -NewName "${{ steps.name.outputs.artifact }}.exe"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.name.outputs.artifact }}*

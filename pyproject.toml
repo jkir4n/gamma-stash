@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gamma-mods-downloader"
-version = "2.0.0"
+version = "0.0.0"
 description = "Batch download G.A.M.M.A. mods using the official mods.txt manifest from ModDB and GitHub"
 readme = "README.md"
 license = {text = "MIT"}

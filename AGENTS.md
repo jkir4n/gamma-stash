@@ -29,10 +29,10 @@ Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-download
 
 | Command | Notes |
 |---------|-------|
-| `init` | Writes `config.yaml` in cwd. Auto-detects GAMMA `mods.txt` from hard-coded Windows paths (`D:\GAMMA\...`, `C:\GAMMA\...`) and falls back to `mods.txt`. |
+| `init` | Writes `config.yaml` in cwd (fails if already exists). Auto-detects GAMMA `mods.txt` from hard-coded Windows paths (`D:\GAMMA\...`, `C:\GAMMA\...`) and falls back to `mods.txt`. Also writes `tracking_file` key (unused). |
 | `status` | Prints totals + category breakdown. |
 | `list` | Supports `--pending`, `--moddb`, `--github`, `--verbose`. |
-| `download` | Downloads all `PENDING` entries sequentially. Writes `_progress.txt` to `download_dir` after each entry. `max_concurrent` is read but ignored. |
+| `download` | Downloads all `PENDING` entries sequentially. Writes `_progress.txt` to `download_dir` after each entry. `max_concurrent` is read but ignored. Exits 1 if any download fails, 0 if all OK. |
 
 ## External dependencies
 
@@ -61,7 +61,7 @@ Fields: `URL \t install_path \t - author \t description \t moddb_page_url \t fil
 
 Load order: `--config` → `./config.yaml` → `~/.config/gamma-mods-downloader/config.yaml` → package-parent `config.yaml`.
 
-The README mentions `./gamma-mods-downloader.yaml` and `/etc/...` — these are **not** in the code.
+The README mentions `./gamma-mods-downloader.yaml` and `/etc/...` — these are **not** in the code. The README's `--version` / `-V` flag is also not implemented.
 
 Environment overrides use `GMD_*` prefix (e.g. `GMD_FLARESOLVERR_URL`). See `_apply_env_overrides` in `config.py:112` for the full mapping — values are cast to bool/int based on the default's type.
 
@@ -84,6 +84,7 @@ tracking_file: ""             # reserved, not actively used
 
 - **Status is not persisted back to `mods.txt`.** `LinksFile.update_entry_status()` is a no-op TODO. After `download`, the file is not rewritten; status exists only in memory.
 - `max_concurrent` is read from config but has no effect — downloads run one at a time.
+- **`destination.local_path` defaults to `download_dir`** when empty (see `config.py:142`). If you don't explicitly set it in config, the "final destination" is the same as the temp download directory.
 - For MODDB downloads, Flaresolverr must return a `/downloads/mirror/<hash>` link in the page HTML; mirror extraction is a single regex (`flaresolverr_client.py:74`).
 - Downloads skip files smaller than ~100 bytes and treat them as failures.
 - `download_all` writes progress to `_progress.txt` in `download_dir` after each entry (simple `N/M | OK:X FAIL:Y` format).
