@@ -20,5 +20,10 @@ dependencies = [
 [project.scripts]
 gamma-mods-downloader = "gamma_mods_downloader.cli:main"
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0",
+]
+
 [tool.setuptools.packages.find]
 include = ["gamma_mods_downloader*"]

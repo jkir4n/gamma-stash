@@ -15,6 +15,15 @@ python -m gamma_mods_downloader --help
 
 Setting `GMD_DEBUG=1` prints full tracebacks on error (otherwise errors print a one-line message only).
 
+## Build a single-file executable
+
+```bash
+pip install .[build]
+python scripts/build_exe.py
+```
+
+Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-downloader` (Linux/macOS). The executable still requires `curl` on `PATH`; Flaresolverr and ssh/scp are needed only for their respective optional features.
+
 ## CLI commands
 
 | Command | Notes |
