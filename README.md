@@ -47,6 +47,42 @@ gamma-stash --help       Show help
 - Flaresolverr — enter an existing instance IP, or let the tool self-host via Docker
 - Docker Desktop (optional) — only needed if you choose self-hosted Flaresolverr
 
+## Docker Desktop Setup (Windows)
+
+Docker Desktop requires WSL 2 or Hyper-V on Windows.
+
+### Option 1: WSL 2 (Recommended)
+
+1. Open **PowerShell as Administrator**
+2. Install WSL:
+   ```
+   wsl --install
+   ```
+3. Restart your PC when prompted
+4. Download and install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+5. During Docker Desktop install, ensure **"Use WSL 2 instead of Hyper-V"** is checked
+6. Start Docker Desktop from the Start menu — wait for the engine to start (whale icon stops animating)
+
+### Option 2: Hyper-V
+
+1. Open **PowerShell as Administrator**
+2. Enable Hyper-V:
+   ```
+   Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+   ```
+3. Restart your PC
+4. Download and install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+5. Start Docker Desktop from the Start menu
+
+### Verify
+
+```powershell
+docker --version
+docker run hello-world
+```
+
+The tool can also auto-install Docker Desktop via `winget` if missing — just say yes when prompted.
+
 ## How It Works
 
 1. Parses your GAMMA `mods.txt` (tab-separated format: `URL | install_path | author | description | moddb_page | filename | MD5`)
