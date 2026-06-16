@@ -180,11 +180,11 @@ OFF = " " * 4
 def print_banner() -> None:
     """Print the G.A.M.M.A. STASH banner with version."""
     from gamma_mods_downloader import __version__, __app_name__
-    W = 45
+    W = 42
     art = f"""
 {GREEN}   {BOX_TL}{BOX_H * W}{BOX_TR}
-   {BOX_V}   {AMBER}{BOLD}{__app_name__}{RESET}{GREEN}  v{__version__}                  {BOX_V}
-   {BOX_V}   {GRAY}Batch download G.A.M.M.A. mods from mods.txt   {GREEN}{BOX_V}
+   {BOX_V}   {AMBER}{BOLD}{__app_name__}{RESET}{GREEN}  v{__version__}            {BOX_V}
+   {BOX_V}   {GRAY}Batch download G.A.M.M.A. mods  {GREEN}{BOX_V}
    {BOX_BL}{BOX_H * W}{BOX_BR}{RESET}
 """
     print(art)
