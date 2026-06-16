@@ -732,14 +732,10 @@ def cleanup_docker() -> bool:
     else:
         print_info("No flaresolverr container found.")
 
-    print_info("Pruning unused Docker resources ...")
-    result = subprocess.run(
-        ["docker", "system", "prune", "-f"],
-        capture_output=False, timeout=120,
-    )
-    if result.returncode == 0:
-        print_ok("Docker system pruned.")
-        performed = True
+    print_info("Removing Flaresolverr image ...")
+    subprocess.run(["docker", "rmi", "flaresolverr/flaresolverr"],
+                   capture_output=True, timeout=30)
+    print_ok("Flaresolverr cleaned up.")
 
     print()
     if not _prompt_yes_no("Uninstall Docker from this machine?"):
