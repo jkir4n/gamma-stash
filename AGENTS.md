@@ -13,7 +13,8 @@ gamma-mods-downloader --help
 python -m gamma_mods_downloader --help
 ```
 
-Setting `GMD_DEBUG=1` prints full tracebacks on error (otherwise errors print a one-line message only).
+- Entry point: `gamma_mods_downloader.cli:main`
+- `GMD_DEBUG=1` prints full tracebacks; otherwise errors print a one-line message.
 
 ## Build a single-file executable
 
@@ -90,7 +91,7 @@ tracking_file: ""             # reserved, not actively used
 
 ## Important gotchas
 
-- **Status is not persisted back to `mods.txt`.** `LinksFile.update_entry_status()` is a no-op TODO. After `download`, the file is not rewritten; status exists only in memory and the HTML report.
+- **Status is not persisted back to `mods.txt`.** `LinksFile.update_entry_status()` is a no-op TODO. After `download`, the file is not rewritten; status exists only in memory.
 - `max_concurrent` is read from config but has no effect — downloads run one at a time.
 - SSH destination assumes a **Windows remote host** (`type "file"`, `if exist "file"`).
 - For MODDB downloads, Flaresolverr must return a `/downloads/mirror/<hash>` link in the page HTML; mirror extraction is a single regex (`flaresolverr_client.py:74`).
