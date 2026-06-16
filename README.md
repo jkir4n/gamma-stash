@@ -133,3 +133,12 @@ scripts/
 ## License
 
 MIT
+
+## Antivirus Notice
+
+PyInstaller single-file executables can trigger **false positives** in some antivirus engines. This is a known issue with PyInstaller — the way it bundles Python and extracts to a temp directory at runtime mimics certain malware behaviors.
+
+- The entire source code is available in this repository — nothing is hidden
+- Every release is built via a **public GitHub Actions workflow** you can inspect
+- Scan the exe yourself at [VirusTotal](https://www.virustotal.com) if concerned
+- The executable only: reads your GAMMA `mods.txt`, downloads files via `curl`, and optionally manages Docker containers
