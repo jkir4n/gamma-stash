@@ -9,10 +9,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -30,17 +27,10 @@ jobs:
       - name: Set artifact name
         id: name
         shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          echo "artifact=gamma-stash-${{ github.ref_name }}-${OS}" >> $GITHUB_OUTPUT
+        run: echo "artifact=gamma-stash-${{ github.ref_name }}-windows.exe" >> $GITHUB_OUTPUT
 
-      - name: Rename artifact (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: mv dist/gamma-stash "dist/${{ steps.name.outputs.artifact }}"
-
-      - name: Rename artifact (Windows)
-        if: runner.os == 'Windows'
-        run: Rename-Item -Path dist/gamma-stash.exe -NewName "${{ steps.name.outputs.artifact }}.exe"
+      - name: Rename artifact
+        run: Rename-Item -Path dist/gamma-stash.exe -NewName "${{ steps.name.outputs.artifact }}"
 
       - uses: softprops/action-gh-release@v2
         with:
