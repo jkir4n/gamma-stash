@@ -6,7 +6,6 @@ Usage:
     gamma-mods-downloader status          Show download progress
     gamma-mods-downloader list [--pending] [--moddb | --github]
     gamma-mods-downloader download        Download all pending mods
-    gamma-mods-downloader rebuild-html    Rebuild tracking HTML page
 """
 
 import argparse
@@ -58,8 +57,6 @@ def cmd_init(args: argparse.Namespace) -> int:
             dd = d
             break
 
-    html_dir = os.path.dirname(mods_file) if mods_file else "."
-
     lines = f"""# Gamma Mods Downloader Configuration
 # Edit this file to match your setup.
 # Alternatively, use GMD_* environment variables to override individual values.
@@ -89,9 +86,6 @@ destination:
     key_file: ""
     remote_path: ""
     remote_links_file: ""
-
-# Where to generate the HTML tracking page
-html_output_dir: {html_dir}
 
 # Where to save download tracking state (status, actual_md5 per entry)
 tracking_file: {os.path.join(dd, "_tracking.json")}
@@ -190,20 +184,6 @@ def cmd_download(args: argparse.Namespace) -> int:
     return 0 if results["fail"] == 0 else 1
 
 
-def cmd_rebuild_html(args: argparse.Namespace) -> int:
-    """Rebuild the HTML tracking page."""
-    from .html_rebuilder import rebuild_html
-    cfg = load_config(args.config)
-    links = LinksFile(local_path=cfg["links_file"])
-    entries = links.read()
-    html_path = rebuild_html(
-        entries=entries,
-        output_dir=cfg["html_output_dir"],
-    )
-    print(f"✅ HTML rebuilt: {html_path}")
-    return 0
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Gamma Mods Downloader — batch download G.A.M.M.A. mods",
@@ -235,11 +215,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     # download
     p_dl = sub.add_parser("download", help="Download all pending mods")
     p_dl.set_defaults(func=cmd_download)
-
-    # rebuild-html
-    p_html = sub.add_parser("rebuild-html",
-                            help="Rebuild HTML tracking page")
-    p_html.set_defaults(func=cmd_rebuild_html)
 
     parsed = parser.parse_args(args=argv)
     try:

@@ -47,7 +47,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "remote_links_file": "",
         },
     },
-    "html_output_dir": "",
     "tracking_file": "",
 }
 
@@ -154,6 +153,3 @@ def _set_default_paths(config: Dict[str, Any]) -> None:
     """Set reasonable default paths for empty config values."""
     if not config["destination"]["local_path"]:
         config["destination"]["local_path"] = config["download_dir"]
-
-    if not config["html_output_dir"]:
-        config["html_output_dir"] = os.path.dirname(config["links_file"])

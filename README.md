@@ -12,7 +12,6 @@ Batch download **G.A.M.M.A.** mods from ModDB with automated Cloudflare bypass, 
 - 🔐 **MD5 verification** — Every download is checksum-verified before marking complete
 - 📋 **Status tracking** — Links file (URL | Filename | MD5 | Status) keeps a clear record of what's done and what's pending
 - 🌐 **Local or remote destinations** — Save to a local folder or SCP to a remote machine (e.g., a Windows gaming PC)
-- 📊 **HTML tracking page** — Generate a browsable table with download status, MD5 column, and sorting
 - ⚙️ **Configurable** — YAML config file with environment variable overrides
 
 ---
@@ -91,7 +90,6 @@ gamma-mods-downloader download
 | `status` | Show download summary (total / downloaded / pending) |
 | `list` | List every entry with its status |
 | `download` | Download all pending mods |
-| `rebuild-html` | Rebuild the HTML tracking page |
 
 ### Options
 
@@ -154,12 +152,6 @@ destination:
 # Download behaviour
 download_delay: 2              # seconds between downloads (be nice to ModDB)
 max_concurrent: 1              # sequential only (default)
-
-# HTML tracking page (optional)
-html_output:
-  enabled: false
-  file: "mods_to_download.html"
-  remote: false                # true if HTML file lives on SSH host
 ```
 
 ### Environment variable overrides
@@ -194,9 +186,6 @@ Full list of env vars:
 | `GMD_PROXY` | `proxy` |
 | `GMD_MAX_CONCURRENT` | `max_concurrent` |
 | `GMD_DOWNLOAD_DELAY` | `download_delay` |
-| `GMD_HTML_ENABLED` | `html_output.enabled` |
-| `GMD_HTML_FILE` | `html_output.file` |
-| `GMD_HTML_REMOTE` | `html_output.remote` |
 
 ---
 
@@ -215,13 +204,11 @@ gamma-mods-downloader/
 │   ├── config.py                 # Config loading (YAML + env vars)
 │   ├── flaresolverr_client.py    # Flaresolverr API client
 │   ├── ssh_utils.py              # SSH/SCP utilities
-│   ├── downloader.py             # Main download logic
-│   └── html_rebuilder.py         # HTML tracking page builder
+│   └── downloader.py             # Main download logic
 ├── sample_data/
 │   └── jdownloader_links_sample.txt
 └── scripts/
-    ├── download_all.sh            # Convenience launcher
-    └── rebuild_html.sh            # Convenience launcher
+    └── download_all.sh            # Convenience launcher
 ```
 
 ---
@@ -235,7 +222,6 @@ gamma-mods-downloader/
 5. **Verify** — Computes the MD5 of the downloaded file and compares it against the expected hash
 6. **Deliver** — Copies the verified file to the destination (local folder or remote via SCP)
 7. **Track** — Updates the links file status from `PENDING` to `DOWNLOADED`
-8. **Report** — Optionally rebuilds an HTML tracking page
 
 ---
 

@@ -32,7 +32,6 @@ Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-download
 | `status` | Prints totals + category breakdown. |
 | `list` | Supports `--pending`, `--moddb`, `--github`, `--verbose`. |
 | `download` | Downloads all `PENDING` entries sequentially. Writes `_progress.txt` to `download_dir` after each entry. `max_concurrent` is read but ignored. |
-| `rebuild-html` | Writes `gamma_mods_status.html` to `html_output_dir`. Reads entries **flat** — categories are not passed to the HTML renderer even though `rebuild_html()` supports them. |
 
 ## External dependencies
 
@@ -86,7 +85,6 @@ destination:
     key_file: ""
     remote_path: ""           # Windows path like D:\\gamma\\downloads
     remote_links_file: ""     # path to remote mods.txt
-html_output_dir: "."          # README describes a different html_output block
 tracking_file: ""             # reserved, not actively used
 ```
 
@@ -98,5 +96,4 @@ tracking_file: ""             # reserved, not actively used
 - For MODDB downloads, Flaresolverr must return a `/downloads/mirror/<hash>` link in the page HTML; mirror extraction is a single regex (`flaresolverr_client.py:74`).
 - Downloads skip files smaller than ~100 bytes and treat them as failures.
 - `download_all` writes progress to `_progress.txt` in `download_dir` after each entry (simple `N/M | OK:X FAIL:Y` format).
-- `rebuild-html` calls `links.read()` (flat) not `links.read_with_categories()` — categories are supported by `rebuild_html()` but not wired through the CLI.
 - GitHub downloads use `curl -sL` directly (no Flaresolverr). Only MODDB entries go through Flaresolverr for Cloudflare bypass.
