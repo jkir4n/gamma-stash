@@ -10,4 +10,3 @@ __description__ = "Batch download G.A.M.M.A. mods using the official mods.txt ma
 
 from .config import load_config
 from .downloader import LinksFile, Downloader, md5_file
-from .ssh_utils import SSHClient

@@ -58,7 +58,6 @@ def main() -> int:
         print(f"\nBuilt: {exe_path}")
         print("\nNote: The executable still requires 'curl' on PATH.")
         print("      Flaresolverr is needed only for MODDB downloads.")
-        print("      ssh/scp are needed only when using destination mode 'ssh'.")
     else:
         print("\nBuild finished but executable not found in dist/")
         return 1

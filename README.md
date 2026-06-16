@@ -11,7 +11,7 @@ Batch download **G.A.M.M.A.** mods from ModDB with automated Cloudflare bypass, 
 - 🛡️ **Cloudflare bypass** — Flaresolverr handles JS challenges automatically
 - 🔐 **MD5 verification** — Every download is checksum-verified before marking complete
 - 📋 **Status tracking** — Links file (URL | Filename | MD5 | Status) keeps a clear record of what's done and what's pending
-- 🌐 **Local or remote destinations** — Save to a local folder or SCP to a remote machine (e.g., a Windows gaming PC)
+- 🌐 **Local destination** — Save completed mods to a local folder
 - ⚙️ **Configurable** — YAML config file with environment variable overrides
 
 ---
@@ -21,7 +21,6 @@ Batch download **G.A.M.M.A.** mods from ModDB with automated Cloudflare bypass, 
 - **Python 3.9+**
 - **Flaresolverr** — A running instance (Docker is easiest)
 - **curl** — Used for actual file downloads (more reliable for large files than `urllib`)
-- **SSH client** (optional) — Only needed if copying files to a remote machine
 
 ---
 
@@ -139,15 +138,7 @@ download_dir: "./downloads"
 
 # Destination for completed downloads
 destination:
-  mode: "local"                # "local" or "ssh"
   local_path: "./completed"    # local destination
-  ssh:                         # only used if mode == "ssh"
-    host: "192.168.1.100"
-    user: "username"
-    port: 22
-    key_file: "~/.ssh/id_ed25519"
-    remote_path: "D:\\gamma\\downloads"
-    remote_links_file: "D:\\gamma\\jdownloader_links.txt"
 
 # Download behaviour
 download_delay: 2              # seconds between downloads (be nice to ModDB)
@@ -160,9 +151,6 @@ All config values can be overridden via environment variables. Prefix with `GMD_
 
 ```bash
 export GMD_FLARESOLVERR_URL="http://192.168.1.50:8191/v1"
-export GMD_DEST_MODE="ssh"
-export GMD_SSH_HOST="192.168.1.100"
-export GMD_SSH_USER="jkir4"
 export GMD_DOWNLOAD_DIR="/tmp/mods"
 gamma-mods-downloader download
 ```
@@ -175,14 +163,7 @@ Full list of env vars:
 | `GMD_FLARESOLVERR_TIMEOUT` | `flaresolverr.timeout_ms` |
 | `GMD_LINKS_FILE` | `links_file` |
 | `GMD_DOWNLOAD_DIR` | `download_dir` |
-| `GMD_DEST_MODE` | `destination.mode` |
 | `GMD_DEST_LOCAL_PATH` | `destination.local_path` |
-| `GMD_SSH_HOST` | `destination.ssh.host` |
-| `GMD_SSH_USER` | `destination.ssh.user` |
-| `GMD_SSH_PORT` | `destination.ssh.port` |
-| `GMD_SSH_KEY_FILE` | `destination.ssh.key_file` |
-| `GMD_SSH_REMOTE_PATH` | `destination.ssh.remote_path` |
-| `GMD_SSH_REMOTE_LINKS_FILE` | `destination.ssh.remote_links_file` |
 | `GMD_PROXY` | `proxy` |
 | `GMD_MAX_CONCURRENT` | `max_concurrent` |
 | `GMD_DOWNLOAD_DELAY` | `download_delay` |
@@ -203,7 +184,6 @@ gamma-mods-downloader/
 │   ├── cli.py                    # CLI entry point
 │   ├── config.py                 # Config loading (YAML + env vars)
 │   ├── flaresolverr_client.py    # Flaresolverr API client
-│   ├── ssh_utils.py              # SSH/SCP utilities
 │   └── downloader.py             # Main download logic
 ├── sample_data/
 │   └── jdownloader_links_sample.txt
@@ -220,7 +200,7 @@ gamma-mods-downloader/
 3. **Extract** — Parses the ModDB page HTML to find the mirror download link
 4. **Download** — Downloads the file using `curl` with the Flaresolverr-provided cookies and User-Agent
 5. **Verify** — Computes the MD5 of the downloaded file and compares it against the expected hash
-6. **Deliver** — Copies the verified file to the destination (local folder or remote via SCP)
+6. **Deliver** — Copies the verified file to the local destination folder
 7. **Track** — Updates the links file status from `PENDING` to `DOWNLOADED`
 
 ---
@@ -236,21 +216,21 @@ gamma-mods-downloader/
 │  - Config loader   │     └─────────────────┘
 │  - Download engine │              │
 │  - MD5 verifier    │              ▼
-│  - SSH transport   │     ┌─────────────────┐
-└────────────────────┘     │  curl download   │
-         │                 │  from mirror     │
-         ▼                 └─────────────────┘
+└────────────────────┘     ┌─────────────────┐
+                           │  curl download   │
+          │                │  from mirror     │
+          ▼                └─────────────────┘
 ┌────────────────────┐              │
 │  Links File        │              ▼
 │  (status tracking) │     ┌─────────────────┐
 └────────────────────┘     │  MD5 verify     │
-                           └─────────────────┘
-                                    │
-                                    ▼
-                           ┌─────────────────┐
-                           │  Destination    │
-                           │  (local / SSH)   │
-                           └─────────────────┘
+                            └─────────────────┘
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │  Destination    │
+                            │  (local)        │
+                            └─────────────────┘
 ```
 
 ---
@@ -277,12 +257,6 @@ curl http://localhost:8191/v1
 
 - The file on ModDB might have been updated. Check the mod page for version changes
 - Manually download and re-compute the MD5: `md5sum downloaded_file.zip`
-
-### SCP to remote fails
-
-- Verify SSH key is set up: `ssh user@host` works from your terminal
-- Check the remote path exists and is writable
-- For Windows destinations: the path format should use forward slashes for SCP
 
 ---
 

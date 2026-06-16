@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 
 def _find_config() -> str:
-    """Locate config.yaml — search order: cwd, ~/.config, script dir."""
+    """Locate config.yaml -- search order: cwd, ~/.config, script dir."""
     search_paths = [
         os.path.join(os.getcwd(), "config.yaml"),
         os.path.expanduser("~/.config/gamma-mods-downloader/config.yaml"),
@@ -36,16 +36,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timeout_ms": 60000,
     },
     "destination": {
-        "mode": "local",
         "local_path": "",
-        "ssh": {
-            "host": "",
-            "user": "",
-            "port": 22,
-            "key_file": "",
-            "remote_path": "",
-            "remote_links_file": "",
-        },
     },
     "tracking_file": "",
 }
@@ -91,10 +82,6 @@ def load_config(config_path: Optional[str] = None,
         raise ValueError(
             "download_dir not set. Use GMD_DOWNLOAD_DIR env var or set in config.yaml"
         )
-
-    if config["destination"]["mode"] not in ("local", "ssh"):
-        raise ValueError(f"destination.mode must be 'local' or 'ssh', "
-                         f"got '{config['destination']['mode']}'")
 
     return config
 

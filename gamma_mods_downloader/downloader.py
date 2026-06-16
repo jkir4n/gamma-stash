@@ -14,7 +14,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import load_config
-from .ssh_utils import SSHClient
 
 
 def md5_file(path: str) -> str:
@@ -126,14 +125,11 @@ def format_entry(entry: Dict[str, str]) -> str:
 
 class LinksFile:
     """
-    Manages GAMMA's mods.txt file — tab-separated, with category headers.
+    Manages GAMMA's mods.txt file -- tab-separated, with category headers.
     """
 
-    def __init__(self, local_path: str, ssh: Optional[SSHClient] = None,
-                 remote_path: Optional[str] = None):
+    def __init__(self, local_path: str):
         self.local_path = local_path
-        self.ssh = ssh
-        self.remote_path = remote_path or local_path
 
     def read(self) -> List[Dict[str, str]]:
         """Parse the mods.txt file and return a list of entry dicts."""
@@ -182,21 +178,9 @@ class LinksFile:
         return categories, entries_by_cat
 
     def _read_content(self) -> str:
-        """Read the links file from either local or remote source."""
-        if self.ssh and self._is_remote_primary():
-            content = self.ssh.read_file(self.remote_path)
-            if content is None:
-                raise FileNotFoundError(
-                    f"Cannot read remote links file: {self.remote_path}"
-                )
-            return content
-
+        """Read the links file from local disk."""
         with open(self.local_path, "r") as f:
             return f.read()
-
-    def _is_remote_primary(self) -> bool:
-        """Check if the primary source is remote (local file doesn't exist)."""
-        return not os.path.exists(self.local_path)
 
     def update_entry_status(self, entries: List[Dict[str, str]]) -> bool:
         """
@@ -239,27 +223,10 @@ class Downloader:
                 timeout_ms=fs_cfg.get("timeout_ms", 60000),
             )
         else:
-            print("⚠️  No Flaresolverr configured — MODDB downloads will fail")
-
-        # Set up destination
-        self.dest_mode = config["destination"]["mode"]
-        self.ssh_client: Optional[SSHClient] = None
-        if self.dest_mode == "ssh":
-            ssh_cfg = config["destination"]["ssh"]
-            if ssh_cfg.get("host") and ssh_cfg.get("user"):
-                self.ssh_client = SSHClient(
-                    host=ssh_cfg["host"],
-                    user=ssh_cfg["user"],
-                    port=ssh_cfg.get("port", 22),
-                    key_file=ssh_cfg.get("key_file"),
-                )
+            print("WARN: No Flaresolverr configured -- MODDB downloads will fail")
 
         # Set up links file
-        self.links = LinksFile(
-            local_path=config["links_file"],
-            ssh=self.ssh_client,
-            remote_path=config.get("destination", {}).get("ssh", {}).get("remote_links_file"),
-        )
+        self.links = LinksFile(local_path=config["links_file"])
 
         os.makedirs(self.download_dir, exist_ok=True)
 
@@ -276,31 +243,31 @@ class Downloader:
         local_path = os.path.join(self.download_dir, filename)
 
         print(f"\n{'='*60}")
-        print(f"📦 File: {filename}")
-        print(f"🔖 Description: {entry.get('description', 'N/A')}")
-        print(f"👤 Author: {entry.get('author', 'N/A')}")
+        print(f"File: {filename}")
+        print(f"Description: {entry.get('description', 'N/A')}")
+        print(f"Author: {entry.get('author', 'N/A')}")
         if expected_md5:
-            print(f"🔍 Expected MD5: {expected_md5}")
+            print(f"Expected MD5: {expected_md5}")
         else:
-            print(f"🔍 Expected MD5: (none — will skip verification)")
-        print(f"🌐 Source: {source}")
+            print(f"Expected MD5: (none -- will skip verification)")
+        print(f"Source: {source}")
 
         # Check if already downloaded locally with correct MD5
         if os.path.exists(local_path):
             if expected_md5:
                 actual_md5 = md5_file(local_path)
                 if actual_md5 == expected_md5:
-                    print(f"  ✅ Already downloaded with correct MD5")
+                    print(f"  OK: Already downloaded with correct MD5")
                     entry["actual_md5"] = actual_md5
                     if self._copy_to_destination(local_path, filename):
                         entry["status"] = "DOWNLOADED"
                         return True
                 else:
-                    print(f"  ⚠️  Local MD5 mismatch (got {actual_md5}), re-downloading")
+                    print(f"  WARN: Local MD5 mismatch (got {actual_md5}), re-downloading")
             else:
-                # No MD5 to verify — skip redownload if file exists and has size
+                # No MD5 to verify -- skip redownload if file exists and has size
                 if os.path.getsize(local_path) > 100:
-                    print(f"  ✅ Already exists (no MD5 to verify)")
+                    print(f"  OK: Already exists (no MD5 to verify)")
                     if self._copy_to_destination(local_path, filename):
                         entry["status"] = "DOWNLOADED"
                         return True
@@ -315,19 +282,19 @@ class Downloader:
             return False
 
         size_kb = os.path.getsize(local_path) / 1024
-        print(f"  ✅ Downloaded: {size_kb:.0f} KB")
+        print(f"  OK: Downloaded: {size_kb:.0f} KB")
 
         # Verify MD5 (if we have one)
         if expected_md5:
             actual_md5 = md5_file(local_path)
             entry["actual_md5"] = actual_md5
             if actual_md5 != expected_md5:
-                print(f"  ❌ MD5 MISMATCH: expected {expected_md5}, got {actual_md5}")
+                print(f"  ERROR: MD5 MISMATCH: expected {expected_md5}, got {actual_md5}")
                 os.remove(local_path)
                 return False
-            print(f"  ✅ MD5 OK")
+            print(f"  OK: MD5 OK")
         else:
-            print(f"  ⚠️  No MD5 to verify — skipped")
+            print(f"  WARN: No MD5 to verify -- skipped")
             entry["actual_md5"] = md5_file(local_path)
 
         # Copy to destination
@@ -340,16 +307,16 @@ class Downloader:
     def _download_moddb(self, url: str, local_path: str) -> bool:
         """Download a MODDB-hosted file via Flaresolverr."""
         if not self.flare:
-            print(f"  ❌ Flaresolverr not configured, cannot download MODDB link")
+            print(f"  ERROR: Flaresolverr not configured, cannot download MODDB link")
             return False
 
         import subprocess
 
-        print(f"  🌐 Resolving ModDB page via Flaresolverr...")
+        print(f"  Resolving ModDB page via Flaresolverr...")
         try:
             result = self.flare.resolve(url)
         except Exception as e:
-            print(f"  ❌ Flaresolverr error: {e}")
+            print(f"  ERROR: Flaresolverr error: {e}")
             return False
 
         sol = result.get("solution", {})
@@ -358,14 +325,14 @@ class Downloader:
         # Extract mirror download URL
         mirror_url = self.flare.extract_mirror_url(html)
         if not mirror_url:
-            print(f"  ❌ Could not extract mirror link from page")
+            print(f"  ERROR: Could not extract mirror link from page")
             return False
 
         cookies = sol.get("cookies", [])
         user_agent = sol.get("userAgent", "")
 
         # Download the file
-        print(f"  ⬇️  Downloading from mirror...")
+        print(f"  Downloading from mirror...")
         cookie_header = self.flare.build_cookie_header(cookies)
 
         cmd = [
@@ -382,20 +349,20 @@ class Downloader:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
             http_code = result.stdout.strip()
         except Exception as e:
-            print(f"  ❌ Download failed: {e}")
+            print(f"  ERROR: Download failed: {e}")
             return False
 
         if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
             return True
 
-        print(f"  ❌ Download failed (HTTP {http_code})")
+        print(f"  ERROR: Download failed (HTTP {http_code})")
         return False
 
     def _download_github(self, url: str, local_path: str) -> bool:
         """Download a GitHub-hosted file directly (no Flaresolverr needed)."""
         import subprocess
 
-        print(f"  ⬇️  Downloading from GitHub...")
+        print(f"  Downloading from GitHub...")
         # GitHub downloads work with -L (follow redirects)
         cmd = [
             "curl", "-sL",
@@ -409,43 +376,32 @@ class Downloader:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
             http_code = result.stdout.strip()
         except Exception as e:
-            print(f"  ❌ Download failed: {e}")
+            print(f"  ERROR: Download failed: {e}")
             return False
 
         if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
             return True
 
-        print(f"  ❌ Download failed (HTTP {http_code})")
+        print(f"  ERROR: Download failed (HTTP {http_code})")
         return False
 
     def _copy_to_destination(self, local_path: str, filename: str) -> bool:
-        """Copy a downloaded file to its configured destination."""
-        if self.dest_mode == "ssh" and self.ssh_client:
-            remote_path = self.config["destination"]["ssh"]["remote_path"] + "\\" + filename
-            remote_path_scp = remote_path.replace("\\", "/")
-            if self.ssh_client.copy_to(local_path, remote_path_scp):
-                print(f"  ✅ Copied to remote: {remote_path}")
-                return True
-            else:
-                print(f"  ❌ SCP to remote failed")
-                return False
+        """Copy a downloaded file to its configured local destination."""
+        import shutil
+        dest_dir = self.config["destination"]["local_path"]
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, filename)
 
-        else:
-            import shutil
-            dest_dir = self.config["destination"]["local_path"]
-            os.makedirs(dest_dir, exist_ok=True)
-            dest = os.path.join(dest_dir, filename)
+        if os.path.exists(dest):
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(dest):
+                dest = os.path.join(dest_dir, f"{base}_{counter}{ext}")
+                counter += 1
 
-            if os.path.exists(dest):
-                base, ext = os.path.splitext(filename)
-                counter = 1
-                while os.path.exists(dest):
-                    dest = os.path.join(dest_dir, f"{base}_{counter}{ext}")
-                    counter += 1
-
-            shutil.copy2(local_path, dest)
-            print(f"  ✅ Copied to: {dest}")
-            return True
+        shutil.copy2(local_path, dest)
+        print(f"  OK: Copied to: {dest}")
+        return True
 
     def download_all(self) -> Dict[str, int]:
         """Download all PENDING entries. Returns {success, fail, total_pending}."""
@@ -453,11 +409,11 @@ class Downloader:
         pending = [e for e in entries if e["status"] == "PENDING"]
         total, dl, pend, moddb, github = self.links.status_summary()
 
-        print(f"\n📊 Total: {total} | DOWNLOADED: {dl} | PENDING: {pend}")
+        print(f"\n Total: {total} | DOWNLOADED: {dl} | PENDING: {pend}")
         print(f"   MODDB: {moddb} | GITHUB: {github}")
 
         if not pending:
-            print("🎉 Nothing to download!")
+            print("Nothing to download!")
             return {"success": 0, "fail": 0, "total_pending": 0}
 
         success = 0
@@ -479,6 +435,6 @@ class Downloader:
                 time.sleep(self.delay)
 
         print(f"\n{'='*60}")
-        print(f"🏁 DONE: {success} OK, {fail} FAIL of {len(pending)} PENDING")
+        print(f" DONE: {success} OK, {fail} FAIL of {len(pending)} PENDING")
 
         return {"success": success, "fail": fail, "total_pending": len(pending)}

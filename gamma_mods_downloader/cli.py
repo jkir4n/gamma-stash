@@ -25,7 +25,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     """Generate a default config.yaml pointing to GAMMA's mods.txt."""
     path = args.config or "config.yaml"
     if os.path.exists(path):
-        print(f"❌ {path} already exists. Delete it first or use a different path.")
+        print(f"{path} already exists. Delete it first or use a different path.")
         return 1
 
     # Try to auto-detect GAMMA's mods.txt location
@@ -77,25 +77,17 @@ flaresolverr:
 
 # Destination for downloaded mods
 destination:
-  mode: local         # "local" or "ssh"
   local_path: {dd}
-  ssh:
-    host: ""
-    user: ""
-    port: 22
-    key_file: ""
-    remote_path: ""
-    remote_links_file: ""
 
 # Where to save download tracking state (status, actual_md5 per entry)
 tracking_file: {os.path.join(dd, "_tracking.json")}
 """
     with open(path, "w") as f:
         f.write(lines)
-    print(f"✅ Config written to {_abspath(path)}")
-    print(f"📄 links_file: {mods_file}")
+    print(f"Config written to {_abspath(path)}")
+    print(f"links_file: {mods_file}")
     if not os.path.exists(mods_file):
-        print(f"⚠️  {mods_file} not found — set GMD_LINKS_FILE or edit config.yaml")
+        print(f"WARN: {mods_file} not found -- set GMD_LINKS_FILE or edit config.yaml")
     return 0
 
 
@@ -106,22 +98,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     try:
         total, downloaded, pending, moddb, github = links.status_summary()
     except FileNotFoundError:
-        print(f"❌ Links file not found: {cfg['links_file']}")
+        print(f"Links file not found: {cfg['links_file']}")
         return 1
 
-    print(f"\n📊 G.A.M.M.A. Mod Status")
-    print(f"{'─'*40}")
-    print(f"📦  Total mods:  {total}")
-    print(f"✅  Downloaded:  {downloaded}")
-    print(f"⏳  Pending:     {pending}")
-    print(f"{'─'*40}")
-    print(f"🌐  MODDB:       {moddb}")
-    print(f"🐙  GitHub:      {github}")
+    print(f"\nG.A.M.M.A. Mod Status")
+    print(f"{'-'*40}")
+    print(f"Total mods:  {total}")
+    print(f"Downloaded:  {downloaded}")
+    print(f"Pending:     {pending}")
+    print(f"{'-'*40}")
+    print(f"MODDB:       {moddb}")
+    print(f"GitHub:      {github}")
 
     # Show by category
     try:
         cats, entries_by_cat = links.read_with_categories()
-        print(f"\n📁  By category:")
+        print(f"\n  By category:")
         for i, cat_name in enumerate(cats):
             cat_entries = entries_by_cat[i]
             dl = sum(1 for e in cat_entries if e["status"] == "DOWNLOADED")
@@ -148,22 +140,22 @@ def cmd_list(args: argparse.Namespace) -> int:
         entries = [e for e in entries if e["source"] == "GITHUB"]
 
     if not entries:
-        print("📭 No entries matching filters.")
+        print("No entries matching filters.")
         return 0
 
     has_md5 = any(e.get("expected_md5") for e in entries)
 
     for e in entries:
-        src_icon = "🐙" if e["source"] == "GITHUB" else "🌐"
+        src_icon = "[GH]" if e["source"] == "GITHUB" else "[M]"
         desc = e.get("description", "")
         author = e.get("author", "")
-        md5_str = f" [{e['expected_md5'][:8]}…]" if e.get("expected_md5") else " [no MD5]"
-        status_icon = "✅" if e["status"] == "DOWNLOADED" else "⏳"
+        md5_str = f" [{e['expected_md5'][:8]}...]" if e.get("expected_md5") else " [no MD5]"
+        status_icon = "[D]" if e["status"] == "DOWNLOADED" else "[P]"
         print(f"  {status_icon} {src_icon} {e['filename']}{md5_str}")
         if desc and args.verbose:
-            print(f"       📝 {desc} — by {author}")
+            print(f"        {desc} -- by {author}")
 
-    print(f"\n📊 {len(entries)} entries")
+    print(f"\n{len(entries)} entries")
 
     if not args.pending:
         total = len(links.read())
@@ -186,7 +178,7 @@ def cmd_download(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Gamma Mods Downloader — batch download G.A.M.M.A. mods",
+        description="Gamma Mods Downloader -- batch download G.A.M.M.A. mods",
     )
     parser.add_argument("--config", "-c", default=None,
                         help="Path to config.yaml (default: auto-detect)")
@@ -220,7 +212,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return parsed.func(parsed)
     except Exception as e:
-        print(f"❌ Error: {e}", file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         if os.environ.get("GMD_DEBUG"):
             import traceback
             traceback.print_exc()

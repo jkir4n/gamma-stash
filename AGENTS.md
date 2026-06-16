@@ -23,7 +23,7 @@ pip install .[build]
 python scripts/build_exe.py
 ```
 
-Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-downloader` (Linux/macOS). The executable still requires `curl` on `PATH`; Flaresolverr and ssh/scp are needed only for their respective optional features.
+Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-downloader` (Linux/macOS). The executable still requires `curl` on `PATH`; Flaresolverr is needed only for MODDB downloads.
 
 ## CLI commands
 
@@ -39,7 +39,6 @@ Produces `dist/gamma-mods-downloader.exe` (Windows) or `dist/gamma-mods-download
 - **PyYAML** — only runtime dependency (`requirements.txt`).
 - **curl** — invoked via `subprocess` for all downloads; must be on `PATH`.
 - **Flaresolverr** — required only for MODDB links; GitHub links download directly.
-- **ssh/scp** — required only when `destination.mode == "ssh"`. Assumes a **Windows remote host** (commands use `type "file"`, `if exist "file"`).
 
 ## Links file format (important)
 
@@ -77,15 +76,7 @@ flaresolverr:
   url: "http://localhost:8191/v1"
   timeout_ms: 60000
 destination:
-  mode: "local"               # or "ssh"
-  local_path: "./completed"
-  ssh:
-    host: ""
-    user: ""
-    port: 22
-    key_file: ""
-    remote_path: ""           # Windows path like D:\\gamma\\downloads
-    remote_links_file: ""     # path to remote mods.txt
+  local_path: "./completed"   # final location for downloaded mods
 tracking_file: ""             # reserved, not actively used
 ```
 
@@ -93,7 +84,6 @@ tracking_file: ""             # reserved, not actively used
 
 - **Status is not persisted back to `mods.txt`.** `LinksFile.update_entry_status()` is a no-op TODO. After `download`, the file is not rewritten; status exists only in memory.
 - `max_concurrent` is read from config but has no effect — downloads run one at a time.
-- SSH destination assumes a **Windows remote host** (`type "file"`, `if exist "file"`).
 - For MODDB downloads, Flaresolverr must return a `/downloads/mirror/<hash>` link in the page HTML; mirror extraction is a single regex (`flaresolverr_client.py:74`).
 - Downloads skip files smaller than ~100 bytes and treat them as failures.
 - `download_all` writes progress to `_progress.txt` in `download_dir` after each entry (simple `N/M | OK:X FAIL:Y` format).
