@@ -180,14 +180,27 @@ OFF = " " * 4
 def print_banner() -> None:
     """Print the G.A.M.M.A. STASH banner with version."""
     from gamma_mods_downloader import __version__, __app_name__
-    W = 42
-    art = f"""
-{GREEN}   {BOX_TL}{BOX_H * W}{BOX_TR}
-   {BOX_V}   {AMBER}{BOLD}{__app_name__}{RESET}{GREEN}  v{__version__}            {BOX_V}
-   {BOX_V}   {GRAY}Batch download G.A.M.M.A. mods  {GREEN}{BOX_V}
-   {BOX_BL}{BOX_H * W}{BOX_BR}{RESET}
-"""
-    print(art)
+
+    W = 42  # total width including borders
+    inner = W - 2  # usable width inside box
+
+    # Center the title line
+    title = f"{__app_name__}  v{__version__}"
+    pad = (inner - 3 - len(title))  # 3 spaces left margin
+    if pad < 1:
+        pad = 1
+
+    tagline = "Batch download G.A.M.M.A. mods"
+    pad2 = (inner - 3 - len(tagline))
+    if pad2 < 1:
+        pad2 = 1
+
+    top = f"{GREEN}   {BOX_TL}{BOX_H * W}{BOX_TR}{RESET}"
+    ln1 = f"{GREEN}   {BOX_V}   {AMBER}{BOLD}{title}{RESET}{GREEN}{' ' * pad}{BOX_V}{RESET}"
+    ln2 = f"{GREEN}   {BOX_V}   {GRAY}{tagline}{' ' * pad2}{GREEN}{BOX_V}{RESET}"
+    bot = f"{GREEN}   {BOX_BL}{BOX_H * W}{BOX_BR}{RESET}"
+
+    print(f"\n{top}\n{ln1}\n{ln2}\n{bot}\n")
 
 
 def print_status_bar(flaresolverr_url: str = "", fs_version: str = "",
