@@ -336,6 +336,35 @@ def _docker_daemon_ok() -> bool:
         return False
 
 
+def _check_virtualization() -> Optional[str]:
+    """
+    Check if WSL2 or Hyper-V is available for Docker.
+    Returns 'wsl2', 'hyperv', or None if neither.
+    """
+    try:
+        result = subprocess.run(
+            ["wsl", "--status"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if "Default Version: 2" in result.stdout:
+            return "wsl2"
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V).State"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and "Enabled" in result.stdout:
+            return "hyperv"
+    except Exception:
+        pass
+
+    return None
+
+
 def setup_docker_flaresolverr() -> Optional[str]:
     print()
 
@@ -382,8 +411,31 @@ def setup_docker_flaresolverr() -> Optional[str]:
             return None
         return _wait_for_flaresolverr("http://localhost:8191/v1")
 
-    # Docker not installed — ask to install
+    # Docker not installed — check virtualization, then offer to install
     print_error("Docker is not installed or not on PATH.")
+
+    if _is_windows():
+        vtype = _check_virtualization()
+        if not vtype:
+            if _prompt_yes_no("Enable WSL 2 for Docker?"):
+                print_info("Enabling WSL 2 ...")
+                result = subprocess.run(
+                    ["wsl", "--install", "--no-distribution"],
+                    capture_output=False, timeout=300,
+                )
+                if result.returncode == 0:
+                    print_ok("WSL 2 enabled. You must restart your PC before Docker will work.")
+                else:
+                    print_warn("Could not enable WSL 2 automatically.")
+                    print_info("Run in admin PowerShell: wsl --install")
+                _offer_relaunch()
+                return None
+            else:
+                print_info("Docker Desktop requires WSL 2 or Hyper-V on Windows.")
+                print_info("See the README for manual setup instructions.")
+                return None
+        else:
+            print_ok(f"Virtualization ready ({vtype})")
     if not _prompt_yes_no("Install Docker and set up Flaresolverr?"):
         return None
 
