@@ -2,20 +2,19 @@
 CLI for G.A.M.M.A. STASH.
 
 Usage:
-    gamma-stash                   Run the setup + download wizard
-    gamma-stash setup             Same as above
+    gamma-stash                   Launch the TUI wizard
+    gamma-stash setup             CLI wizard (no TUI)
     gamma-stash cleanup           Stop/remove Flaresolverr Docker container
+    gamma-stash --cli             Force CLI mode for default flow
 """
 
 import argparse
-import os
 import sys
 from typing import List, Optional
 
-from .setup import check_all_dependencies, run_setup_wizard, cleanup_docker
+from .setup import run_setup_wizard, cleanup_docker
 from .terminal import (
-    GREEN, AMBER, RED, CYAN, GRAY, DIM, BOLD, RESET,
-    print_banner, print_ok, print_error, print_warn, print_info, print_divider,
+    RED, RESET,
 )
 from . import __version__
 
@@ -29,19 +28,10 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _default_flow(parsed: argparse.Namespace) -> int:
-    all_ok, missing_req, missing_opt = check_all_dependencies()
-    if not all_ok:
-        print_error("Required dependencies missing:")
-        for dep in missing_req:
-            print(f"    {RED}[!!]{RESET} {dep}")
-        print()
-        print_info("Run 'gamma-stash setup' to install them.")
-        return 1
-
-    print_info("Starting setup wizard ...")
-    print()
-    return cmd_setup(parsed)
+def _default_flow_tui() -> int:
+    from .tui import run_tui
+    run_tui()
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -50,9 +40,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--version", "-V", action="version",
                         version=f"G.A.M.M.A. STASH {__version__}")
+    parser.add_argument("--cli", action="store_true",
+                        help="Use CLI mode instead of TUI")
     sub = parser.add_subparsers(dest="command")
 
-    p_setup = sub.add_parser("setup", help="Run the setup + download wizard")
+    p_setup = sub.add_parser("setup", help="Run the setup + download wizard (CLI)")
     p_setup.set_defaults(func=cmd_setup)
 
     p_clean = sub.add_parser("cleanup", help="Stop/remove Flaresolverr Docker container")
@@ -66,31 +58,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if parsed.command:
             rc = parsed.func(parsed)
+        elif parsed.cli:
+            rc = cmd_setup(parsed)
         else:
-            rc = _default_flow(parsed)
+            rc = _default_flow_tui()
     except SystemExit:
         raise
     except Exception as e:
         print(f"{RED}ERROR:{RESET} {e}", file=sys.stderr)
-        if os.environ.get("GMD_DEBUG"):
-            import traceback
-            traceback.print_exc()
+        if sys.platform == "win32":
+            try:
+                input("Press Enter to exit ...")
+            except Exception:
+                pass
         rc = 1
 
-    _maybe_wait_for_exit(argv)
     return rc
-
-
-def _maybe_wait_for_exit(argv: Optional[List[str]]) -> None:
-    if argv is not None:
-        return
-    if not sys.stdout.isatty():
-        return
-    try:
-        print()
-        input(f"{GRAY}Press Enter to exit ...{RESET}")
-    except EOFError:
-        pass
 
 
 if __name__ == "__main__":

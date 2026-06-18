@@ -44,6 +44,10 @@ def main() -> int:
         "--distpath", DIST_DIR,
         "--workpath", BUILD_DIR,
         "--specpath", BUILD_DIR,
+        "--hidden-import", "textual",
+        "--hidden-import", "rich",
+        "--hidden-import", "markdown_it",
+        "--collect-submodules", "textual",
     ]
 
     icon_path = os.path.join(PROJECT_ROOT, "icon.ico")
