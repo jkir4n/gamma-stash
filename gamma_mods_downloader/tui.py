@@ -26,6 +26,38 @@ from .setup import (
 from .downloader import Downloader
 
 
+# ── G.A.M.M.A. Theme ────────────────────────────────────────────────
+
+GAMMA_THEME_VARS = {
+    "block-cursor-text-style": "none",
+    "footer-key-foreground": "#00cc00",
+    "input-selection-background": "#00cc00 30%",
+    "border-focus": "#00cc00",
+    "scrollbar-color": "#00cc00 30%",
+    "scrollbar-color-hover": "#00cc00 50%",
+    "scrollbar-color-active": "#00cc00 70%",
+}
+
+
+def _make_gamma_theme() -> "Theme":
+    from textual.theme import Theme
+    return Theme(
+        name="gamma",
+        primary="#00cc00",
+        secondary="#228800",
+        accent="#ff8c00",
+        foreground="#c8d8c8",
+        background="#080a08",
+        success="#00e500",
+        warning="#ff8c00",
+        error="#ff3333",
+        surface="#101510",
+        panel="#151a15",
+        dark=True,
+        variables=GAMMA_THEME_VARS,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Modal confirm dialog
 # ---------------------------------------------------------------------------
@@ -82,14 +114,25 @@ class StashApp(App):
 
     CSS = """
     Screen {
-        background: #0a0c0a;
+        background: #080a08;
+    }
+    Header {
+        background: #101510;
+        color: #00cc00;
+    }
+    Footer {
+        background: #101510;
+    }
+    Footer > .footer--key {
+        color: #00cc00;
+        background: #151a15;
     }
     #banner {
         text-align: center;
         width: 100%;
         height: auto;
         padding: 1 0;
-        color: #00ff00;
+        color: #00cc00;
     }
     #steps {
         height: auto;
@@ -105,20 +148,45 @@ class StashApp(App):
         padding: 1 2;
         align: center middle;
     }
+    Button {
+        margin: 0 1;
+        border: solid #00cc00;
+    }
+    Button:focus {
+        border: solid #ff8c00;
+    }
+    Button:hover {
+        border: solid #ff8c00;
+    }
+    Input {
+        width: 100%;
+        margin: 1 0;
+        border: solid #446644;
+    }
+    Input:focus {
+        border: solid #00cc00;
+    }
+    RichLog {
+        height: auto;
+        max-height: 22;
+        margin: 1 0;
+        background: #080a08;
+        border: solid #222822;
+    }
+    Static {
+        color: #c8d8c8;
+    }
     .title {
         color: #ff8c00;
         text-align: center;
         width: 100%;
         margin-bottom: 1;
     }
-    .ok { color: #00ff00; }
-    .err { color: #ff4444; }
+    .ok { color: #00cc00; }
+    .err { color: #ff3333; }
     .warn { color: #ff8c00; }
-    .dim { color: #888888; }
+    .dim { color: #778877; }
     .bold { text-style: bold; }
-    Button { margin: 0 1; }
-    Input { width: 100%; margin: 1 0; }
-    RichLog { height: auto; max-height: 22; margin: 1 0; }
     """
 
     BINDINGS = [("q", "quit", "Quit")]
@@ -143,6 +211,8 @@ class StashApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(_make_gamma_theme())
+        self.theme = "gamma"
         self._title("")
         self.query_one("#banner", Static).update(
             f"[bold green]G.A.M.M.A. STASH[/] [dim]v{__version__}[/]\n"
