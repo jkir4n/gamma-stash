@@ -18,11 +18,47 @@ class FlaresolverrError(Exception):
 
 
 class FlaresolverrClient:
-    """Client for interacting with a Flaresolverr instance."""
+    """Client for interacting with a Flaresolverr instance with optional session pooling."""
 
-    def __init__(self, url: str = "http://localhost:8191/v1", timeout_ms: int = 60000):
+    def __init__(self, url: str = "http://localhost:8191/v1", timeout_ms: int = 60000,
+                 use_session: bool = True, session_id: str = "gamma_stash_session"):
         self.url = url.rstrip("/")
         self.timeout_ms = timeout_ms
+        self.session_id: Optional[str] = session_id if use_session else None
+
+    def create_session(self, session_id: Optional[str] = None) -> bool:
+        """Create a persistent browser session in Flaresolverr for fast reuse."""
+        sid = session_id or self.session_id or "gamma_stash_session"
+        payload = json.dumps({"cmd": "sessions.create", "session": sid}).encode()
+        try:
+            req = urllib.request.Request(
+                self.url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            resp = urllib.request.urlopen(req, timeout=15)
+            result = json.loads(resp.read())
+            if result.get("status") == "ok":
+                self.session_id = sid
+                return True
+        except Exception:
+            pass
+        return False
+
+    def destroy_session(self) -> bool:
+        """Destroy the active Flaresolverr session."""
+        if not self.session_id:
+            return True
+        payload = json.dumps({"cmd": "sessions.destroy", "session": self.session_id}).encode()
+        try:
+            req = urllib.request.Request(
+                self.url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            result = json.loads(resp.read())
+            self.session_id = None
+            return result.get("status") == "ok"
+        except Exception:
+            self.session_id = None
+            return False
 
     def resolve(self, page_url: str, timeout_ms: Optional[int] = None) -> dict:
         """
@@ -35,12 +71,15 @@ class FlaresolverrClient:
 
         Raises FlaresolverrError on failure.
         """
-        payload = json.dumps({
+        body: dict = {
             "cmd": "request.get",
             "url": page_url,
             "maxTimeout": timeout_ms or self.timeout_ms,
-        }).encode()
+        }
+        if self.session_id:
+            body["session"] = self.session_id
 
+        payload = json.dumps(body).encode()
         timeout = (timeout_ms or self.timeout_ms) // 1000 + 30
         req = urllib.request.Request(
             self.url,
@@ -52,10 +91,17 @@ class FlaresolverrClient:
             resp = urllib.request.urlopen(req, timeout=timeout)
             result = json.loads(resp.read())
         except Exception as e:
+            # If session was invalid, try recreating once without session
+            if self.session_id and "session" in str(e).lower():
+                self.session_id = None
+                return self.resolve(page_url, timeout_ms)
             raise FlaresolverrError(f"Failed to connect to Flaresolverr at {self.url}: {e}")
 
         if result.get("status") != "ok":
             msg = result.get("message", "Unknown error")
+            if self.session_id and "session" in msg.lower():
+                self.session_id = None
+                return self.resolve(page_url, timeout_ms)
             raise FlaresolverrError(f"Flaresolverr request failed: {msg}")
 
         solution = result.get("solution")

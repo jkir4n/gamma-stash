@@ -8,10 +8,13 @@
 
 ## Features
 
-- **Interactive TUI & CLI wizards** — rich G.A.M.M.A.-themed Textual TUI interface with a dedicated `--cli` fallback
-- **MD5-aware scanning** — checks existing files against expected hashes, automatically re-downloads corrupt files, and skips verified mods
-- **Atomic downloads & retries** — downloads to `.part` staging files, validates HTTP status codes, and retries failed downloads with exponential backoff
-- **Cloudflare bypass** — MODDB downloads via Flaresolverr (handles mirror and start links); GitHub downloads directly
+- **Next-Gen TUI & CLI managers** — rich Textual TUI with live `DataTable`, dual progress bars, speed telemetry, and a dedicated `--cli` fallback
+- **High-throughput concurrent downloads** — parallel worker pool for GitHub direct downloads alongside sequential ModDB handling
+- **Sub-second hash caching** — `.stash_cache.json` metadata cache avoids redundant full-disk re-hashing
+- **HTTP `Range` resume** — interrupted downloads resume from their last byte on partial `.part` files
+- **Flaresolverr session pooling** — persistent browser sessions drop Cloudflare resolution times from ~12s to ~2s per link
+- **Auto-discovery & disk safety** — auto-detects G.A.M.M.A. paths across all drives and verifies available disk space
+- **Atomic downloads & retries** — downloads stage to `.part` files and rename atomically upon verified HTTP status and MD5 matches
 - **Auto-cleanup** — after downloads, offers safe cleanup of Flaresolverr containers without removing existing Docker setups
 
 ## Quick Start
@@ -26,20 +29,22 @@ Double-click `gamma-stash.exe` — the setup wizard walks you through everything
 
 1. **Dependency check** — ensures `curl` is on PATH (auto-installs via winget if missing)
 2. **Flaresolverr setup** — enter IP of an existing instance, or let the tool self-host via Docker
-3. **Locate GAMMA** — point it at your GAMMA installation folder (e.g., `D:\GAMMA`)
-4. **Scan modlist** — MD5-checks every downloaded file, shows what's missing
-5. **Download** — fetches only the mods you need with atomic staging and retries
+3. **Locate GAMMA** — auto-detects installation paths or lets you enter a custom folder
+4. **Scan modlist** — fast cached MD5 verification shows missing or corrupted mods
+5. **Download** — high-speed concurrent batch downloading with resume support
 6. **Cleanup** — optionally removes Flaresolverr containers
 
 ### Command Line
 
 ```
-gamma-stash             Launch the TUI wizard (default)
-gamma-stash setup       Run the CLI wizard (no TUI)
-gamma-stash --cli       Force CLI mode for default flow
-gamma-stash cleanup     Stop/remove Flaresolverr container
-gamma-stash --version   Show version
-gamma-stash --help      Show help
+gamma-stash                                 Launch the TUI wizard (default)
+gamma-stash setup                           Run the CLI wizard (no TUI)
+gamma-stash --cli                           Force CLI mode for default flow
+gamma-stash setup --gamma-dir "D:\GAMMA"    Specify GAMMA folder directly
+gamma-stash setup -y                        Run unattended (auto-yes to prompts)
+gamma-stash cleanup                         Stop/remove Flaresolverr container
+gamma-stash --version                       Show version
+gamma-stash --help                          Show help
 ```
 
 ## Requirements

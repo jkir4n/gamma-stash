@@ -20,11 +20,15 @@ from . import __version__
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    return run_setup_wizard()
+    return run_setup_wizard(
+        gamma_dir=getattr(args, "gamma_dir", None),
+        flaresolverr_url=getattr(args, "flaresolverr_url", None),
+        yes=getattr(args, "yes", False),
+    )
 
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
-    cleanup_docker()
+    cleanup_docker(interactive=not getattr(args, "yes", False))
     return 0
 
 
@@ -42,12 +46,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                         version=f"G.A.M.M.A. STASH {__version__}")
     parser.add_argument("--cli", action="store_true",
                         help="Use CLI mode instead of TUI")
+    parser.add_argument("--gamma-dir", type=str, default=None,
+                        help="Path to GAMMA installation folder")
+    parser.add_argument("--flaresolverr-url", type=str, default=None,
+                        help="URL of Flaresolverr instance (e.g. http://localhost:8191)")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="Automatic yes to prompts; run unattended")
     sub = parser.add_subparsers(dest="command")
 
     p_setup = sub.add_parser("setup", help="Run the setup + download wizard (CLI)")
+    p_setup.add_argument("--gamma-dir", type=str, default=None,
+                         help="Path to GAMMA installation folder")
+    p_setup.add_argument("--flaresolverr-url", type=str, default=None,
+                         help="URL of Flaresolverr instance (e.g. http://localhost:8191)")
+    p_setup.add_argument("-y", "--yes", action="store_true",
+                         help="Automatic yes to prompts; run unattended")
     p_setup.set_defaults(func=cmd_setup)
 
     p_clean = sub.add_parser("cleanup", help="Stop/remove Flaresolverr Docker container")
+    p_clean.add_argument("-y", "--yes", action="store_true",
+                         help="Automatic yes to prompts; run unattended")
     p_clean.set_defaults(func=cmd_cleanup)
 
     try:

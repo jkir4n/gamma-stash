@@ -527,7 +527,7 @@ def configure_flaresolverr() -> Optional[Tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# GAMMA folder location
+# GAMMA folder location & Auto-Discovery
 # ---------------------------------------------------------------------------
 
 def _find_mods_txt(gamma_path: str) -> Optional[str]:
@@ -556,8 +556,88 @@ def _is_gamma_folder(path: str) -> Tuple[bool, str]:
     return False, "No mods.txt found in this folder"
 
 
+def check_disk_space(path: str, required_gb: float = 25.0) -> Tuple[bool, float, float]:
+    """Check available disk space in GB on the drive of the given path."""
+    import shutil
+    try:
+        target = path if os.path.exists(path) else os.path.dirname(os.path.abspath(path))
+        while not os.path.exists(target) and os.path.dirname(target) != target:
+            target = os.path.dirname(target)
+        usage = shutil.disk_usage(target)
+        free_gb = usage.free / (1024 ** 3)
+        total_gb = usage.total / (1024 ** 3)
+        return free_gb >= required_gb, free_gb, total_gb
+    except Exception:
+        return True, 0.0, 0.0
+
+
+def discover_gamma_paths() -> List[Dict[str, Any]]:
+    """Scan system drives and common paths to auto-detect GAMMA installations."""
+    found: List[Dict[str, Any]] = []
+    candidates = []
+
+    if _is_windows():
+        import string
+        # Check all available drive letters
+        for letter in string.ascii_uppercase:
+            drive_root = f"{letter}:\\"
+            if os.path.exists(drive_root):
+                candidates.extend([
+                    os.path.join(drive_root, "GAMMA"),
+                    os.path.join(drive_root, "G.A.M.M.A"),
+                    os.path.join(drive_root, "Anomaly"),
+                    os.path.join(drive_root, "STALKER Anomaly"),
+                    os.path.join(drive_root, "Games", "GAMMA"),
+                    os.path.join(drive_root, "Games", "Anomaly"),
+                ])
+    else:
+        home = os.path.expanduser("~")
+        candidates.extend([
+            os.path.join(home, "GAMMA"),
+            os.path.join(home, "gamma"),
+            os.path.join(home, ".local", "share", "gamma"),
+        ])
+
+    seen = set()
+    for c in candidates:
+        norm = os.path.normpath(c)
+        if norm in seen or not os.path.isdir(norm):
+            continue
+        seen.add(norm)
+        mods_txt = _find_mods_txt(norm)
+        if mods_txt:
+            _, free_gb, total_gb = check_disk_space(norm)
+            found.append({
+                "path": norm,
+                "mods_txt": mods_txt,
+                "free_gb": free_gb,
+                "total_gb": total_gb,
+            })
+
+    return found
+
+
 def locate_gamma_folder() -> Optional[str]:
     print_header("Locate GAMMA Installation")
+
+    # Check auto-discovered paths
+    discovered = discover_gamma_paths()
+    if discovered:
+        print_info("Auto-discovered GAMMA installation(s):")
+        for i, d in enumerate(discovered, 1):
+            print(f"  {AMBER}{i}.{RESET} {WHITE}{d['path']}{RESET} {DIM}(Free: {d['free_gb']:.1f} GB){RESET}")
+        print(f"  {AMBER}{len(discovered)+1}.{RESET} Enter path manually")
+        print()
+        choice = input(f"  {AMBER}Select option{RESET} {DIM}(1-{len(discovered)+1})> {RESET}").strip()
+        try:
+            c_idx = int(choice)
+            if 1 <= c_idx <= len(discovered):
+                selected = discovered[c_idx - 1]
+                print_ok(f"Selected: {selected['path']}")
+                return selected["mods_txt"]
+        except ValueError:
+            pass
+
     print_info("Enter the path to your GAMMA installation folder.")
     print(f"  {DIM}Example:{RESET} {GRAY}D:\\\\GAMMA{RESET}")
     print(f"  {DIM}The folder should contain a mods.txt file.{RESET}")
@@ -610,7 +690,7 @@ def _find_downloads_folder(mods_path: str) -> str:
 def scan_modlist(mods_path: str, download_dir: str,
                  log_cb: Optional[Any] = None,
                  progress_cb: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-    from .downloader import LinksFile, md5_file
+    from .downloader import LinksFile, load_hash_cache, save_hash_cache, cached_md5_file
 
     if not log_cb:
         print_header("Scanning Modlist")
@@ -635,6 +715,8 @@ def scan_modlist(mods_path: str, download_dir: str,
         else:
             log_cb(f"[ERROR] Failed to parse mods.txt: {e}")
         return None
+
+    cache = load_hash_cache(download_dir)
 
     total = len(entries)
     already_ok = 0
@@ -674,7 +756,7 @@ def scan_modlist(mods_path: str, download_dir: str,
 
         if os.path.exists(fpath):
             if expected_md5:
-                actual = md5_file(fpath)
+                actual = cached_md5_file(fpath, cache)
                 if actual == expected_md5:
                     already_ok += 1
                     ok_filenames.append(filename)
@@ -708,6 +790,8 @@ def scan_modlist(mods_path: str, download_dir: str,
     if bar:
         bar.done()
         print()
+
+    save_hash_cache(download_dir, cache)
 
     # Summary
     if not log_cb:
@@ -916,7 +1000,9 @@ def should_run_setup(config_path: str = "config.yaml") -> bool:
     return False
 
 
-def run_setup_wizard() -> int:
+def run_setup_wizard(gamma_dir: Optional[str] = None,
+                     flaresolverr_url: Optional[str] = None,
+                     yes: bool = False) -> int:
     print_banner()
 
     # Step 1: Dependencies
@@ -924,25 +1010,49 @@ def run_setup_wizard() -> int:
         return 1
 
     # Step 2: Flaresolverr
-    fs_result = configure_flaresolverr()
-    if not fs_result:
-        print()
-        print_error("Flaresolverr is required for ModDB downloads.")
-        print_info("Run this tool again when you have a Flaresolverr instance ready.")
-        return 1
-    fs_url, fs_mode = fs_result
+    fs_mode = "manual"
+    if flaresolverr_url:
+        fs_url = flaresolverr_url.rstrip("/") + ("/v1" if not flaresolverr_url.endswith("/v1") else "")
+        ok, msg = validate_flaresolverr(fs_url)
+        if not ok:
+            print_error(f"Provided Flaresolverr URL failed check: {msg}")
+            if not yes and not _prompt_yes_no("Continue anyway?"):
+                return 1
+        else:
+            print_ok(f"Flaresolverr ready: {fs_url}")
+    else:
+        fs_result = configure_flaresolverr()
+        if not fs_result:
+            print()
+            print_error("Flaresolverr is required for ModDB downloads.")
+            print_info("Run this tool again when you have a Flaresolverr instance ready.")
+            return 1
+        fs_url, fs_mode = fs_result
 
     # Step 3: Locate GAMMA folder
-    mods_path = locate_gamma_folder()
-    if not mods_path:
-        print()
-        print_error("GAMMA folder is required to find the mod list.")
-        print_info("Run this tool again when you have GAMMA installed.")
-        return 1
+    if gamma_dir:
+        expanded = os.path.expandvars(os.path.expanduser(gamma_dir.strip('"')))
+        mods_path = _find_mods_txt(expanded)
+        if not mods_path:
+            print_error(f"No mods.txt found at provided gamma-dir: {gamma_dir}")
+            return 1
+        print_ok(f"Using GAMMA path: {expanded}")
+    else:
+        mods_path = locate_gamma_folder()
+        if not mods_path:
+            print()
+            print_error("GAMMA folder is required to find the mod list.")
+            print_info("Run this tool again when you have GAMMA installed.")
+            return 1
 
     downloads_dir = _find_downloads_folder(mods_path)
     os.makedirs(downloads_dir, exist_ok=True)
     print_field("Download folder", downloads_dir)
+
+    # Pre-flight disk space check
+    has_space, free_gb, total_gb = check_disk_space(downloads_dir, required_gb=25.0)
+    if not has_space:
+        print_warn(f"Low disk space! Drive has {free_gb:.1f} GB free (25+ GB recommended).")
 
     # Step 4: Scan modlist
     stats = scan_modlist(mods_path, downloads_dir)
@@ -957,7 +1067,7 @@ def run_setup_wizard() -> int:
 
     print()
     print_info(f"{need_total} mods need downloading ({GREEN}{stats['already_ok']} already OK{RESET}).")
-    if not _prompt_yes_no("Start downloading now?"):
+    if not yes and not _prompt_yes_no("Start downloading now?"):
         return 0
 
     # Step 5: Download
@@ -968,8 +1078,8 @@ def run_setup_wizard() -> int:
     config = {
         "links_file": mods_path,
         "download_dir": downloads_dir,
-        "download_delay": 2,
-        "max_concurrent": 1,
+        "download_delay": 1,
+        "max_concurrent": 3,
         "flaresolverr": {
             "url": fs_url,
             "timeout_ms": 60000,
@@ -981,7 +1091,7 @@ def run_setup_wizard() -> int:
 
     result = run_download(config, skip_set)
 
-    if fs_mode == "docker":
+    if fs_mode == "docker" and not yes:
         print()
         if _prompt_yes_no("Downloads complete. Clean up Flaresolverr container?"):
             cleanup_docker(interactive=True)
