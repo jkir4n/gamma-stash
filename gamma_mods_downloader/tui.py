@@ -6,13 +6,12 @@ import os
 import asyncio
 from typing import Any, Dict, List, Optional
 
-from textual import on
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.screen import ModalScreen
+from textual.screen import Screen, ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static, ProgressBar, DataTable
 from textual.worker import Worker, WorkerState
-from textual import work
 
 from . import __version__
 from .setup import (
@@ -60,56 +59,620 @@ def _make_gamma_theme() -> "Theme":
 
 
 # ---------------------------------------------------------------------------
-# Modal confirm dialog
+# Base Screen with common layout
 # ---------------------------------------------------------------------------
 
-class ConfirmScreen(ModalScreen[bool]):
-    CSS = """
-    #dialog {
-        background: #0d140d;
-        border: thick #ffb000;
-        padding: 2 3;
-        width: 54;
-        height: auto;
-        align: center middle;
-    }
-    #buttons {
-        align: center middle;
-        margin-top: 1;
-    }
-    Button { margin: 0 1; }
-    """
+class BaseStashScreen(Screen):
+    """Base screen providing standard G.A.M.M.A. header and styling."""
 
-    def __init__(self, question: str) -> None:
+    def compose_header(self, title: str = "") -> ComposeResult:
+        yield Header()
+        yield Static(
+            f"[bold #00ff41]G.A.M.M.A. STASH[/] [dim]v{__version__}[/]\n"
+            f"[dim]Next-Gen Mod Manager & Batch Downloader[/]",
+            id="banner",
+        )
+        if title:
+            yield Static(f"[bold #ffb000]{title}[/]", id="steps")
+
+
+# ---------------------------------------------------------------------------
+# Screens
+# ---------------------------------------------------------------------------
+
+class WelcomeScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Welcome")
+        yield Container(
+            Vertical(
+                Label(
+                    "\n[bold #00ff41]Welcome to G.A.M.M.A. STASH[/]\n\n"
+                    "• [white]Concurrent downloads for GitHub direct links[/]\n"
+                    "• [white]Sub-second hash caching & HTTP Range resume[/]\n"
+                    "• [white]Flaresolverr session pooling for fast ModDB mirror resolution[/]\n"
+                    "• [white]Auto-discovery of G.A.M.M.A. installations & free disk space[/]\n"
+                ),
+                classes="status-panel",
+            ),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Start Wizard", variant="primary", id="start_setup"),
+            Button("Exit", variant="error", id="quit_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#start_setup")
+    def on_start(self) -> None:
+        self.app.push_screen(DepsScreen())
+
+    @on(Button.Pressed, "#quit_btn")
+    def on_quit(self) -> None:
+        self.app.exit()
+
+
+class DepsScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Checking System Dependencies")
+        all_ok, missing, _ = check_all_dependencies()
+        log = RichLog(wrap=True, id="deps_log")
+
+        content_widgets = []
+        if all_ok:
+            log.write("[green]✓[/] curl is available on PATH")
+            log.write("[dim]✓ docker (optional, for self-hosting Flaresolverr)[/]")
+            content_widgets.append(log)
+            buttons = [
+                Button("Next", variant="primary", id="next_btn"),
+                Button("Back", variant="default", id="back_btn"),
+            ]
+        else:
+            log.write("[red]✗ MISSING[/] curl (required)")
+            content_widgets.extend([
+                log,
+                Label("[red]curl is required to download mods.[/]"),
+            ])
+            buttons = [
+                Button("Auto-Install curl", variant="primary", id="install_curl_btn"),
+                Button("Exit", variant="error", id="quit_btn"),
+            ]
+
+        yield Container(*content_widgets, id="content")
+        yield Horizontal(*buttons, id="buttons")
+        yield Footer()
+
+    @on(Button.Pressed, "#next_btn")
+    def on_next(self) -> None:
+        self.app.push_screen(FlareChoiceScreen())
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#install_curl_btn")
+    def on_install_curl(self) -> None:
+        self.install_curl_worker()
+
+    @work(thread=True, exclusive=True)
+    def install_curl_worker(self) -> None:
+        log = self.query_one("#deps_log", RichLog)
+        self.app.call_from_thread(log.write, "Installing curl via winget ...")
+        ok = _install_curl()
+        if ok:
+            self.app.call_from_thread(log.write, "[green]curl installed successfully! Please restart the app.[/]")
+        else:
+            self.app.call_from_thread(log.write, "[red]Failed to install curl. Please install manually.[/]")
+
+    @on(Button.Pressed, "#quit_btn")
+    def on_quit(self) -> None:
+        self.app.exit()
+
+
+class FlareChoiceScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Flaresolverr Cloudflare Bypass")
+        yield Container(
+            Vertical(
+                Label(
+                    "Flaresolverr is used to resolve Cloudflare challenges on ModDB.\n\n"
+                    "Select configuration mode:"
+                ),
+                classes="status-panel",
+            ),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Docker (Auto-Launch)", variant="primary", id="flare_docker_btn"),
+            Button("Remote / Existing IP", variant="primary", id="flare_manual_btn"),
+            Button("Back", variant="default", id="back_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#flare_docker_btn")
+    def on_docker(self) -> None:
+        self.app.push_screen(DockerScreen())
+
+    @on(Button.Pressed, "#flare_manual_btn")
+    def on_manual(self) -> None:
+        self.app.push_screen(ManualIPScreen())
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+
+class ManualIPScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Enter Flaresolverr Address")
+        yield Container(
+            Label("Enter URL of your Flaresolverr instance:\n[dim]Example: http://192.168.1.50:8191/[/]"),
+            Input(placeholder="http://localhost:8191/v1", id="fsip"),
+            Label("", id="error_msg"),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Validate & Continue", variant="primary", id="validate_ip_btn"),
+            Button("Back", variant="default", id="back_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#validate_ip_btn")
+    def on_validate(self) -> None:
+        url = self.query_one("#fsip", Input).value.strip()
+        if not url:
+            url = "http://localhost:8191/v1"
+        self.validate_worker(url)
+
+    @work(thread=True)
+    def validate_worker(self, url: str) -> None:
+        err_label = self.query_one("#error_msg", Label)
+        if not url.startswith("http"):
+            self.app.call_from_thread(err_label.update, "[red]URL must start with http:// or https://[/]")
+            return
+
+        self.app.call_from_thread(err_label.update, "[yellow]Connecting to Flaresolverr ...[/]")
+        ok, msg = validate_flaresolverr(url)
+        if ok:
+            fs_clean = url.rstrip("/") + ("/v1" if not url.endswith("/v1") else "")
+            self.app.state["fs_url"] = fs_clean
+            self.app.state["fs_mode"] = "manual"
+            self.app.call_from_thread(self.app.push_screen, PathSelectScreen())
+        else:
+            self.app.call_from_thread(err_label.update, f"[red]Connection error: {msg}[/]")
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+
+class DockerScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Docker — Flaresolverr Container")
+        yield Container(
+            RichLog(id="dklog", wrap=True),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Cancel", variant="error", id="cancel_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.app.state["fs_mode"] = "docker"
+        self.docker_worker()
+
+    @work(thread=True, exclusive=True)
+    def docker_worker(self) -> None:
+        log = self.query_one("#dklog", RichLog)
+
+        def w(s):
+            self.app.call_from_thread(log.write, s)
+
+        docker_path = _find_docker()
+        if not docker_path:
+            w("[yellow]Docker not detected.[/]")
+            if _is_windows():
+                v = _check_virtualization()
+                if not v:
+                    w("[red]No WSL2 or Hyper-V detected.[/]")
+                    w("Docker requires WSL2 or Hyper-V on Windows.")
+                    return
+                w(f"[green]Virtualization ready: {v}[/]")
+
+            w("Installing Docker Desktop via winget ...")
+            import subprocess
+            subprocess.run(
+                ["winget", "install", "--id", "Docker.DockerDesktop",
+                 "--silent", "--accept-package-agreements"],
+                capture_output=True, text=True, timeout=600,
+            )
+            if not _find_docker():
+                w("[yellow]Docker installed. Please restart the app.[/]")
+                return
+
+        if not _docker_daemon_ok():
+            w("[red]Docker daemon not running.[/]")
+            w("Please start Docker Desktop and wait for it to initialize, then retry.")
+            return
+
+        w("[green]Docker daemon ready[/]")
+
+        if _docker_container_running("flaresolverr"):
+            w("[green]Flaresolverr container is already running.[/]")
+        elif _docker_container_exists("flaresolverr"):
+            w("Starting existing Flaresolverr container ...")
+            import subprocess
+            subprocess.run(["docker", "start", "flaresolverr"], capture_output=True, timeout=30)
+        else:
+            w("Launching Flaresolverr container ...")
+            import subprocess
+            subprocess.run(
+                ["docker", "run", "-d", "--name", "flaresolverr",
+                 "-p", "8191:8191", "flaresolverr/flaresolverr"],
+                capture_output=True, timeout=60,
+            )
+
+        url = "http://localhost:8191/v1"
+        w("Waiting for Flaresolverr endpoint ...")
+        for _ in range(25):
+            ok, msg = validate_flaresolverr(url, timeout_sec=3)
+            if ok:
+                w(f"[green]Flaresolverr active: {msg}[/]")
+                break
+            import time
+            time.sleep(1)
+
+        self.app.state["fs_url"] = url
+        self.app.call_from_thread(self.app.push_screen, PathSelectScreen())
+
+    @on(Button.Pressed, "#cancel_btn")
+    def on_cancel(self) -> None:
+        self.app.pop_screen()
+
+
+class PathSelectScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Locate G.A.M.M.A. Folder")
+
+        widgets = []
+        try:
+            discovered = discover_gamma_paths()
+        except Exception:
+            discovered = []
+
+        if discovered:
+            widgets.append(Label("[bold #ffb000]Auto-Discovered Installation(s):[/]\n"))
+            for i, d in enumerate(discovered):
+                btn_id = f"autopath_{i}"
+                has_space, free_gb, _ = check_disk_space(d["path"])
+                space_str = f"({free_gb:.1f} GB free)"
+                widgets.append(Button(f"Use {d['path']} {space_str}", id=btn_id, variant="primary"))
+            widgets.append(Label("\n[dim]Or enter folder manually:[/]\n"))
+
+        widgets.extend([
+            Input(placeholder=r"D:\GAMMA", id="gpath"),
+            Label("", id="path_err"),
+        ])
+
+        yield Container(*widgets, id="content")
+        yield Horizontal(
+            Button("Validate Path", variant="primary", id="validate_path_btn"),
+            Button("Back", variant="default", id="back_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed)
+    def on_button_click(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id or ""
+        if btn_id.startswith("autopath_"):
+            idx = int(btn_id.split("_")[1])
+            discovered = discover_gamma_paths()
+            if 0 <= idx < len(discovered):
+                selected = discovered[idx]
+                self.app.state["mods_path"] = selected["mods_txt"]
+                self.app.state["downloads_dir"] = _find_downloads_folder(selected["mods_txt"])
+                os.makedirs(self.app.state["downloads_dir"], exist_ok=True)
+                self.app.push_screen(ScanScreen())
+
+    @on(Button.Pressed, "#validate_path_btn")
+    def on_validate(self) -> None:
+        path = self.query_one("#gpath", Input).value.strip().strip('"')
+        err = self.query_one("#path_err", Label)
+        if not path:
+            err.update("[red]Please enter a path.[/]")
+            return
+        expanded = os.path.expandvars(os.path.expanduser(path))
+        ok, reason = _is_gamma_folder(expanded)
+        if not ok:
+            err.update(f"[red]{reason}[/]")
+            return
+        self.app.state["mods_path"] = _find_mods_txt(expanded)
+        self.app.state["downloads_dir"] = _find_downloads_folder(self.app.state["mods_path"])
+        os.makedirs(self.app.state["downloads_dir"], exist_ok=True)
+        self.app.push_screen(ScanScreen())
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+
+class ScanScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Scanning Modlist (Fast Hash Cache)")
+        yield Container(
+            Vertical(
+                Label("Checking existing archives against expected MD5 hashes ...\n", id="scan_status"),
+                ProgressBar(total=100, id="scan_bar"),
+                classes="status-panel",
+            ),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Cancel", variant="error", id="cancel_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.scan_worker()
+
+    @work(thread=True, exclusive=True)
+    def scan_worker(self) -> None:
+        pbar = self.query_one("#scan_bar", ProgressBar)
+        status_lbl = self.query_one("#scan_status", Label)
+
+        def prog_cb(cur: int, tot: int, fn: str) -> None:
+            self.app.call_from_thread(pbar.update, total=tot, progress=cur)
+            self.app.call_from_thread(status_lbl.update, f"Scanning [{cur}/{tot}] {fn[:35]}")
+
+        stats = scan_modlist(
+            self.app.state["mods_path"],
+            self.app.state["downloads_dir"],
+            log_cb=lambda m: None,
+            progress_cb=prog_cb,
+        )
+        if stats is None:
+            self.app.call_from_thread(self.app.push_screen, SummaryScreen(results={"success": 0, "fail": 1, "total_pending": 0}))
+            return
+
+        self.app.state["scan_stats"] = stats
+        self.app.state["scan_ok"] = frozenset(stats.get("ok_filenames", []))
+        self.app.state["need_total"] = stats["need_download"] + stats["need_redownload"]
+
+        self.app.call_from_thread(self.app.push_screen, ScanSummaryScreen(stats))
+
+    @on(Button.Pressed, "#cancel_btn")
+    def on_cancel(self) -> None:
+        self.app.pop_screen()
+
+
+class ScanSummaryScreen(BaseStashScreen):
+    def __init__(self, stats: Dict[str, Any]) -> None:
         super().__init__()
-        self.question = question
+        self.stats = stats
 
     def compose(self) -> ComposeResult:
-        yield Vertical(
-            Label(self.question, id="q"),
-            Horizontal(
-                Button("Yes", variant="primary", id="yesbtn"),
-                Button("No", variant="error", id="nobtn"),
-                id="buttons",
+        yield from self.compose_header("Scan Summary")
+        ok = self.stats["already_ok"]
+        need = self.stats["need_download"]
+        redo = self.stats["need_redownload"]
+        total = self.stats["total"]
+
+        has_space, free_gb, _ = check_disk_space(self.app.state["downloads_dir"])
+        space_warn = f"\n[yellow]Drive free space: {free_gb:.1f} GB[/]" if free_gb else ""
+
+        yield Container(
+            Vertical(
+                Label(
+                    f"[bold #00ff41]Verification Scan Complete[/]\n\n"
+                    f"• [green]{ok} Verified & Ready[/]\n"
+                    f"• [yellow]{need} Missing / Pending[/]\n"
+                    f"{'• [red]'+str(redo)+' Corrupted / Need Re-download[/]\n' if redo else ''}"
+                    f"• [dim]Total Mods: {total}[/]{space_warn}"
+                ),
+                classes="status-panel",
             ),
-            id="dialog",
+            id="content",
         )
 
-    @on(Button.Pressed, "#yesbtn")
-    def _yes(self) -> None:
-        self.dismiss(True)
+        buttons = []
+        if need == 0 and redo == 0:
+            buttons.append(Button("Done", variant="primary", id="done_btn"))
+        else:
+            buttons.extend([
+                Button(f"Download {need + redo} Mods", variant="primary", id="start_dl_btn"),
+                Button("Back", variant="default", id="back_btn"),
+            ])
 
-    @on(Button.Pressed, "#nobtn")
-    def _no(self) -> None:
-        self.dismiss(False)
+        yield Horizontal(*buttons, id="buttons")
+        yield Footer()
+
+    @on(Button.Pressed, "#start_dl_btn")
+    def on_start_dl(self) -> None:
+        self.app.push_screen(DownloadScreen())
+
+    @on(Button.Pressed, "#done_btn")
+    def on_done(self) -> None:
+        self.app.push_screen(SummaryScreen({"success": self.stats["total"], "fail": 0, "total_pending": 0}))
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+
+class DownloadScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Downloading G.A.M.M.A. Mods")
+        overall_pbar = ProgressBar(total=self.app.state["need_total"] or 1, id="pbar_overall", show_eta=True)
+        active_pbar = ProgressBar(total=100, id="pbar_active")
+        telemetry = Label("Initializing worker threads...", id="telemetry_label", classes="telemetry")
+
+        table = DataTable(id="mod_table")
+        table.cursor_type = "row"
+        table.add_columns("Status", "Source", "Filename", "Transfer Speed")
+
+        log = RichLog(id="dllog", wrap=True, max_lines=40)
+
+        yield Container(
+            Vertical(
+                telemetry,
+                Label("[dim]Overall Progress:[/]", classes="dim"),
+                overall_pbar,
+                Label("[dim]Active File:[/]", classes="dim"),
+                active_pbar,
+                table,
+                log,
+            ),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Hide Logs [L]", variant="default", id="toggle_log_btn"),
+            Button("Exit", variant="error", id="quit_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.download_worker()
+
+    @work(thread=True, exclusive=True)
+    def download_worker(self) -> None:
+        log = self.query_one("#dllog", RichLog)
+        table = self.query_one("#mod_table", DataTable)
+        overall_pbar = self.query_one("#pbar_overall", ProgressBar)
+        active_pbar = self.query_one("#pbar_active", ProgressBar)
+        telemetry = self.query_one("#telemetry_label", Label)
+
+        def dl_log(msg: str) -> None:
+            self.app.call_from_thread(log.write, msg)
+
+        def on_event(event_type: str, data: dict) -> None:
+            fn = data.get("filename", "")
+            if event_type == "entry_start":
+                src = data.get("source", "MODDB")
+                self.app.call_from_thread(
+                    table.add_row,
+                    "[bold cyan]📥 DL[/]", src, fn, "Starting...",
+                    key=fn
+                )
+                self.app.call_from_thread(table.scroll_end, animate=False)
+                self.app.call_from_thread(active_pbar.update, progress=0)
+            elif event_type == "entry_progress":
+                speed_str = data.get("speed_str", "")
+                size_str = data.get("size_str", "")
+                self.app.call_from_thread(
+                    telemetry.update,
+                    f"[bold #ffb000]{fn[:30]}[/]  •  [green]{speed_str}[/]  •  [white]{size_str}[/]"
+                )
+                try:
+                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", speed_str)
+                except Exception:
+                    pass
+            elif event_type == "entry_complete":
+                try:
+                    self.app.call_from_thread(table.update_cell, fn, "Status", "[bold green]✓ OK[/]")
+                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", "Verified")
+                except Exception:
+                    pass
+            elif event_type == "entry_error":
+                try:
+                    self.app.call_from_thread(table.update_cell, fn, "Status", "[bold red]✗ FAIL[/]")
+                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", "Failed")
+                except Exception:
+                    pass
+            elif event_type == "overall_progress":
+                comp = data.get("completed", 0)
+                tot = data.get("total", 1)
+                ok_c = data.get("success", 0)
+                fail_c = data.get("fail", 0)
+                self.app.call_from_thread(overall_pbar.update, total=tot, progress=comp)
+
+        config = {
+            "links_file": self.app.state["mods_path"],
+            "download_dir": self.app.state["downloads_dir"],
+            "download_delay": 1,
+            "max_concurrent": 3,
+            "flaresolverr": {"url": self.app.state["fs_url"], "timeout_ms": 60000},
+            "destination": {"local_path": self.app.state["downloads_dir"]},
+        }
+
+        d = Downloader(config, log_callback=dl_log, on_event=on_event)
+        results = d.download_all(self.app.state["scan_ok"])
+        self.app.call_from_thread(self.app.push_screen, SummaryScreen(results))
+
+    @on(Button.Pressed, "#toggle_log_btn")
+    def on_toggle_log(self) -> None:
+        log = self.query_one("#dllog", RichLog)
+        log.display = not log.display
+
+    @on(Button.Pressed, "#quit_btn")
+    def on_quit(self) -> None:
+        self.app.exit()
+
+
+class SummaryScreen(BaseStashScreen):
+    def __init__(self, results: Dict[str, Any]) -> None:
+        super().__init__()
+        self.results = results
+
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Downloads Finished")
+        success = self.results.get("success", 0)
+        fail = self.results.get("fail", 0)
+        total = self.results.get("total_pending", 0)
+
+        yield Container(
+            Vertical(
+                Label(
+                    f"[bold #00ff41]Download Batch Summary[/]\n\n"
+                    f"• [green]{success} Succeeded[/]\n"
+                    f"{'• [red]'+str(fail)+' Failed[/]\n' if fail else ''}"
+                    f"• [white]Total Processed: {total}[/]"
+                ),
+                classes="status-panel",
+            ),
+            id="content",
+        )
+
+        buttons = []
+        if fail > 0:
+            buttons.append(Button("Retry Failed Mods", variant="warning", id="retry_btn"))
+        if self.app.state.get("fs_mode") == "docker":
+            buttons.append(Button("Clean up Docker", variant="primary", id="cleanup_btn"))
+        buttons.append(Button("Exit", variant="error", id="exit_btn"))
+
+        yield Horizontal(*buttons, id="buttons")
+        yield Footer()
+
+    @on(Button.Pressed, "#retry_btn")
+    def on_retry(self) -> None:
+        self.app.push_screen(ScanScreen())
+
+    @on(Button.Pressed, "#cleanup_btn")
+    def on_cleanup(self) -> None:
+        self.cleanup_worker()
+
+    @work(thread=True, exclusive=True)
+    def cleanup_worker(self) -> None:
+        cleanup_docker(interactive=False, uninstall_docker=False)
+        self.app.exit()
+
+    @on(Button.Pressed, "#exit_btn")
+    def on_exit(self) -> None:
+        self.app.exit()
 
 
 # ---------------------------------------------------------------------------
-# Main app
+# Main App
 # ---------------------------------------------------------------------------
 
 class StashApp(App):
-    """G.A.M.M.A. STASH — Next-Gen TUI."""
+    """G.A.M.M.A. STASH — Next-Gen Screen-Based TUI."""
 
     CSS = """
     Screen {
@@ -195,7 +758,6 @@ class StashApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("l", "toggle_log", "Toggle Log"),
     ]
 
     def __init__(self):
@@ -208,535 +770,12 @@ class StashApp(App):
             "scan_ok": frozenset(),
             "need_total": 0,
             "scan_stats": {},
-            "show_log": True,
         }
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Static(id="banner")
-        yield Static(id="steps")
-        yield Container(id="content")
-        yield Horizontal(id="buttons")
-        yield Footer()
 
     def on_mount(self) -> None:
         self.register_theme(_make_gamma_theme())
         self.theme = "gamma"
-        self._title("")
-        self.query_one("#banner", Static).update(
-            f"[bold #00ff41]G.A.M.M.A. STASH[/] [dim]v{__version__}[/]\n"
-            f"[dim]Next-Gen Mod Manager & Batch Downloader[/]"
-        )
-        self._welcome()
-
-    # ── ui helpers ──────────────────────────────────────────────────
-
-    def _title(self, text: str) -> None:
-        self.query_one("#steps", Static).update(
-            f"[bold #ffb000]{text}[/]" if text else ""
-        )
-
-    def _clear(self) -> None:
-        self.query_one("#content", Container).remove_children()
-        self.query_one("#buttons", Horizontal).remove_children()
-
-    async def _confirm(self, question: str) -> bool:
-        return await self.push_screen(ConfirmScreen(question), wait_for_dismiss=True)
-
-    def _btn(self, label: str, cb: str, variant: str = "primary") -> None:
-        self.query_one("#buttons", Horizontal).mount(
-            Button(label, variant=variant, id=cb)
-        )
-
-    def action_toggle_log(self) -> None:
-        try:
-            log_widget = self.query_one("#dllog", RichLog)
-            log_widget.display = not log_widget.display
-        except Exception:
-            pass
-
-    # ── welcome ─────────────────────────────────────────────────────
-
-    def _welcome(self) -> None:
-        self._clear()
-        c = self.query_one("#content", Container)
-        c.mount(Vertical(
-            Label(
-                "\n[bold #00ff41]Welcome to G.A.M.M.A. STASH[/]\n\n"
-                "• [white]Concurrent downloads for GitHub direct links[/]\n"
-                "• [white]Sub-second hash caching & HTTP Range resume[/]\n"
-                "• [white]Flaresolverr session pooling for fast ModDB mirror resolution[/]\n"
-                "• [white]Auto-discovery of G.A.M.M.A. installations & free disk space[/]\n"
-            ),
-            classes="status-panel"
-        ))
-        self._btn("Start Wizard", "start_setup")
-
-    @on(Button.Pressed, "#start_setup")
-    def _on_start(self) -> None:
-        self._check_deps()
-
-    # ── dependencies ─────────────────────────────────────────────────
-
-    def _check_deps(self) -> None:
-        self._clear()
-        self._title("Checking System Dependencies")
-        c = self.query_one("#content", Container)
-        all_ok, missing, _ = check_all_dependencies()
-        log = RichLog(wrap=True)
-        if all_ok:
-            log.write("[green]✓[/] curl is available on PATH")
-            log.write("[dim]✓ docker (optional, for self-hosting Flaresolverr)[/]")
-            c.mount(log)
-            self._btn("Next", "flare_choice")
-        else:
-            log.write("[red]✗ MISSING[/] curl (required)")
-            c.mount(log)
-            c.mount(Label("[red]curl is required to download mods.[/]"))
-            self._btn("Auto-Install curl", "install_curl")
-            self._btn("Exit", "done", "default")
-
-    @on(Button.Pressed, "#install_curl")
-    def _install_curl_btn(self) -> None:
-        self._clear()
-        c = self.query_one("#content", Container)
-        c.mount(Label("Installing curl via winget ..."))
-        self.install_curl_worker()
-
-    @work(thread=True, exclusive=True)
-    def install_curl_worker(self) -> bool:
-        return _install_curl()
-
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.worker.name == "install_curl_worker" and event.state == WorkerState.SUCCESS:
-            self._clear()
-            c = self.query_one("#content", Container)
-            if event.worker.result:
-                c.mount(Label("[green]curl successfully installed.[/]\n[dim]Please restart the app.[/]"))
-            else:
-                c.mount(Label("[red]Failed to install curl. Please install manually.[/]"))
-            self._btn("Exit", "done")
-
-    # ── Flaresolverr choice ──────────────────────────────────────────
-
-    @on(Button.Pressed, "#flare_choice")
-    def _flare_choice(self) -> None:
-        self._flare_choice_show()
-
-    def _flare_choice_show(self) -> None:
-        self._clear()
-        self._title("Flaresolverr Cloudflare Bypass")
-        c = self.query_one("#content", Container)
-        c.mount(Vertical(
-            Label(
-                "Flaresolverr is used to resolve Cloudflare challenges on ModDB.\n\n"
-                "Select configuration mode:"
-            ),
-            classes="status-panel"
-        ))
-        self._btn("Docker (Auto-Launch)", "flare_docker")
-        self._btn("Remote / Existing IP", "flare_manual")
-        self._btn("Back", "start_setup", "default")
-
-    @on(Button.Pressed, "#flare_manual")
-    def _flare_manual(self) -> None:
-        self._manual_ip_show()
-
-    @on(Button.Pressed, "#flare_docker")
-    def _flare_docker(self) -> None:
-        self._docker_setup()
-
-    # ── manual IP ────────────────────────────────────────────────────
-
-    def _manual_ip_show(self, error: str = "") -> None:
-        self._clear()
-        self._title("Enter Flaresolverr Address")
-        c = self.query_one("#content", Container)
-        c.mount(Label("Enter URL of your Flaresolverr instance:\n"
-                       "[dim]Example: http://192.168.1.50:8191/[/]"))
-        if error:
-            c.mount(Label(f"[red]{error}[/]"))
-        inp = Input(placeholder="http://localhost:8191/v1", id="fsip")
-        c.mount(inp)
-        self._btn("Validate & Continue", "validate_ip")
-        self._btn("Back", "flare_choice", "default")
-
-    @on(Button.Pressed, "#validate_ip")
-    def _validate_ip_btn(self) -> None:
-        url = self.query_one("#fsip", Input).value.strip()
-        self._validate_ip(url)
-
-    @work(thread=True)
-    def _validate_ip(self, url: str) -> None:
-        if not url.startswith("http"):
-            self.call_from_thread(self._manual_ip_show, "URL must start with http:// or https://")
-            return
-        ok, msg = validate_flaresolverr(url)
-        if ok:
-            self.state["fs_url"] = url.rstrip("/") + ("/v1" if not url.endswith("/v1") else "")
-            self.state["fs_mode"] = "manual"
-            self.call_from_thread(self._gamma_folder_show)
-        else:
-            self.call_from_thread(self._manual_ip_show, f"Connection error: {msg}")
-
-    # ── docker self-host ─────────────────────────────────────────────
-
-    def _docker_setup(self) -> None:
-        self._clear()
-        self._title("Docker — Flaresolverr Container")
-        c = self.query_one("#content", Container)
-        log = RichLog(id="dklog", wrap=True)
-        c.mount(log)
-        self.state["fs_mode"] = "docker"
-        self.docker_worker()
-
-    @work(thread=True, exclusive=True)
-    def docker_worker(self) -> None:
-        log = self.query_one("#dklog", RichLog)
-
-        def w(s):
-            self.call_from_thread(log.write, s)
-
-        docker_path = _find_docker()
-        if not docker_path:
-            w("[yellow]Docker not detected.[/]")
-            if _is_windows():
-                v = _check_virtualization()
-                if not v:
-                    w("[red]No WSL2 or Hyper-V detected.[/]")
-                    w("Docker requires WSL2 or Hyper-V on Windows.")
-                    self.call_from_thread(self._show_done, 1)
-                    return
-                w(f"[green]Virtualization ready: {v}[/]")
-
-            w("Installing Docker Desktop via winget ...")
-            import subprocess
-            subprocess.run(
-                ["winget", "install", "--id", "Docker.DockerDesktop",
-                 "--silent", "--accept-package-agreements"],
-                capture_output=True, text=True, timeout=600,
-            )
-            if not _find_docker():
-                w("[yellow]Docker installed. Please restart the app.[/]")
-                self.call_from_thread(self._show_done, 0)
-                return
-
-        if not _docker_daemon_ok():
-            w("[red]Docker daemon not running.[/]")
-            w("Please start Docker Desktop and wait for it to initialize, then retry.")
-            self.call_from_thread(self._show_done, 1)
-            return
-
-        w("[green]Docker daemon ready[/]")
-
-        if _docker_container_running("flaresolverr"):
-            w("[green]Flaresolverr container is already running.[/]")
-        elif _docker_container_exists("flaresolverr"):
-            w("Starting existing Flaresolverr container ...")
-            import subprocess
-            subprocess.run(["docker", "start", "flaresolverr"], capture_output=True, timeout=30)
-        else:
-            w("Launching Flaresolverr container ...")
-            import subprocess
-            subprocess.run(
-                ["docker", "run", "-d", "--name", "flaresolverr",
-                 "-p", "8191:8191", "flaresolverr/flaresolverr"],
-                capture_output=True, timeout=60,
-            )
-
-        url = "http://localhost:8191/v1"
-        w("Waiting for Flaresolverr endpoint ...")
-        for _ in range(25):
-            ok, msg = validate_flaresolverr(url, timeout_sec=3)
-            if ok:
-                w(f"[green]Flaresolverr active: {msg}[/]")
-                break
-            import time
-            time.sleep(1)
-
-        self.state["fs_url"] = url
-        self.call_from_thread(self._gamma_folder_show)
-
-    # ── GAMMA folder & auto-discovery ─────────────────────────────────
-
-    def _gamma_folder_show(self, error: str = "") -> None:
-        self._clear()
-        self._title("Locate G.A.M.M.A. Folder")
-        c = self.query_one("#content", Container)
-
-        discovered = discover_gamma_paths()
-        if discovered:
-            c.mount(Label("[bold #ffb000]Auto-Discovered Installations:[/]\n"))
-            for i, d in enumerate(discovered):
-                btn_id = f"autopath_{i}"
-                has_space, free_gb, _ = check_disk_space(d["path"])
-                space_str = f"[green]{free_gb:.1f} GB free[/]" if has_space else f"[red]{free_gb:.1f} GB free (low)[/]"
-                c.mount(Button(f"Use {d['path']} ({space_str})", id=btn_id, variant="primary"))
-            c.mount(Label("\n[dim]Or enter path manually:[/]\n"))
-
-        if error:
-            c.mount(Label(f"[red]{error}[/]"))
-        inp = Input(placeholder=r"D:\GAMMA", id="gpath")
-        c.mount(inp)
-        self._btn("Validate Path", "validate_gamma")
-        self._btn("Back", "flare_choice", "default")
-
-    @on(Button.Pressed)
-    def _on_path_button(self, event: Button.Pressed) -> None:
-        btn_id = event.button.id or ""
-        if btn_id.startswith("autopath_"):
-            idx = int(btn_id.split("_")[1])
-            discovered = discover_gamma_paths()
-            if 0 <= idx < len(discovered):
-                selected = discovered[idx]
-                self.state["mods_path"] = selected["mods_txt"]
-                self.state["downloads_dir"] = _find_downloads_folder(selected["mods_txt"])
-                os.makedirs(self.state["downloads_dir"], exist_ok=True)
-                self._scan_modlist()
-
-    @on(Button.Pressed, "#validate_gamma")
-    def _validate_gamma(self) -> None:
-        path = self.query_one("#gpath", Input).value.strip().strip('"')
-        if not path:
-            self._gamma_folder_show("Please enter a valid path.")
-            return
-        expanded = os.path.expandvars(os.path.expanduser(path))
-        ok, reason = _is_gamma_folder(expanded)
-        if not ok:
-            self._gamma_folder_show(reason)
-            return
-        self.state["mods_path"] = _find_mods_txt(expanded)
-        self.state["downloads_dir"] = _find_downloads_folder(self.state["mods_path"])
-        os.makedirs(self.state["downloads_dir"], exist_ok=True)
-        self._scan_modlist()
-
-    # ── modlist scan ─────────────────────────────────────────────────
-
-    def _scan_modlist(self) -> None:
-        self._clear()
-        self._title("Scanning Modlist (Fast Hash Cache)")
-        c = self.query_one("#content", Container)
-        pbar = ProgressBar(total=100, id="scan_bar")
-        c.mount(Vertical(
-            Label("Checking existing archives against expected MD5 hashes ...\n"),
-            pbar,
-            classes="status-panel"
-        ))
-        self.scan_worker()
-
-    @work(thread=True, exclusive=True)
-    def scan_worker(self) -> None:
-        pbar = self.query_one("#scan_bar", ProgressBar)
-
-        def log_cb(msg: str) -> None:
-            pass
-
-        def prog_cb(cur: int, tot: int, fn: str) -> None:
-            self.call_from_thread(pbar.update, total=tot, progress=cur)
-            self.call_from_thread(self._title, f"Scanning [{cur}/{tot}] {fn[:30]}")
-
-        stats = scan_modlist(
-            self.state["mods_path"],
-            self.state["downloads_dir"],
-            log_cb=log_cb,
-            progress_cb=prog_cb,
-        )
-        if stats is None:
-            self.call_from_thread(self._show_done, 1)
-            return
-
-        self.state["scan_stats"] = stats
-        self.state["scan_ok"] = frozenset(stats.get("ok_filenames", []))
-        self.state["need_total"] = stats["need_download"] + stats["need_redownload"]
-        self.call_from_thread(
-            self._scan_done,
-            stats["already_ok"], stats["need_download"],
-            stats["need_redownload"], stats["total"],
-        )
-
-    def _scan_done(self, ok: int, need: int, redo: int, total: int) -> None:
-        self._clear()
-        self._title("Scan Summary")
-        c = self.query_one("#content", Container)
-
-        has_space, free_gb, _ = check_disk_space(self.state["downloads_dir"])
-        space_warn = f"\n[yellow]Drive free space: {free_gb:.1f} GB[/]" if free_gb else ""
-
-        c.mount(Vertical(
-            Label(
-                f"[bold #00ff41]Verification Scan Complete[/]\n\n"
-                f"• [green]{ok} Verified & Ready[/]\n"
-                f"• [yellow]{need} Missing / Pending[/]\n"
-                f"{'• [red]'+str(redo)+' Corrupted / Need Re-download[/]\n' if redo else ''}"
-                f"• [dim]Total Mods: {total}[/]{space_warn}"
-            ),
-            classes="status-panel"
-        ))
-
-        if need == 0 and redo == 0:
-            c.mount(Label("\n[green]All mods are completely downloaded and verified![/]"))
-            if self.state["fs_mode"] == "docker":
-                self._btn("Clean up Docker", "cleanup_docker")
-            self._btn("Exit", "done")
-            return
-
-        self._btn(f"Download {need + redo} Mods", "start_download")
-        self._btn("Cancel", "done", "default")
-
-    # ── download with DataTable & Telemetry ───────────────────────────
-
-    @on(Button.Pressed, "#start_download")
-    def _start_download(self) -> None:
-        self._clear()
-        self._title("Downloading G.A.M.M.A. Mods")
-        c = self.query_one("#content", Container)
-
-        # Header gauges
-        overall_pbar = ProgressBar(total=self.state["need_total"] or 1, id="pbar_overall", show_eta=True)
-        active_pbar = ProgressBar(total=100, id="pbar_active")
-        telemetry = Label("Initializing worker threads...", id="telemetry_label", classes="telemetry")
-
-        # Mod Table
-        table = DataTable(id="mod_table")
-        table.cursor_type = "row"
-        table.add_columns("Status", "Source", "Filename", "Transfer Speed")
-
-        log = RichLog(id="dllog", wrap=True, max_lines=50)
-
-        c.mount(Vertical(
-            telemetry,
-            Label("[dim]Overall Progress:[/]", classes="dim"),
-            overall_pbar,
-            Label("[dim]Active File:[/]", classes="dim"),
-            active_pbar,
-            table,
-            log,
-        ))
-
-        self.download_worker()
-
-    @work(thread=True, exclusive=True)
-    def download_worker(self) -> None:
-        log = self.query_one("#dllog", RichLog)
-        table = self.query_one("#mod_table", DataTable)
-        overall_pbar = self.query_one("#pbar_overall", ProgressBar)
-        active_pbar = self.query_one("#pbar_active", ProgressBar)
-        telemetry = self.query_one("#telemetry_label", Label)
-
-        def dl_log(msg: str) -> None:
-            self.call_from_thread(log.write, msg)
-
-        def on_event(event_type: str, data: dict) -> None:
-            fn = data.get("filename", "")
-            if event_type == "entry_start":
-                src = data.get("source", "MODDB")
-                self.call_from_thread(
-                    table.add_row,
-                    "[bold cyan]📥 DL[/]", src, fn, "Starting...",
-                    key=fn
-                )
-                self.call_from_thread(table.scroll_end, animate=False)
-                self.call_from_thread(active_pbar.update, progress=0)
-            elif event_type == "entry_progress":
-                speed_str = data.get("speed_str", "")
-                size_str = data.get("size_str", "")
-                self.call_from_thread(
-                    telemetry.update,
-                    f"[bold #ffb000]{fn[:30]}[/]  •  [green]{speed_str}[/]  •  [white]{size_str}[/]"
-                )
-                try:
-                    self.call_from_thread(table.update_cell, fn, "Transfer Speed", speed_str)
-                except Exception:
-                    pass
-            elif event_type == "entry_complete":
-                try:
-                    self.call_from_thread(table.update_cell, fn, "Status", "[bold green]✓ OK[/]")
-                    self.call_from_thread(table.update_cell, fn, "Transfer Speed", "Verified")
-                except Exception:
-                    pass
-            elif event_type == "entry_error":
-                try:
-                    self.call_from_thread(table.update_cell, fn, "Status", "[bold red]✗ FAIL[/]")
-                    self.call_from_thread(table.update_cell, fn, "Transfer Speed", "Failed")
-                except Exception:
-                    pass
-            elif event_type == "overall_progress":
-                comp = data.get("completed", 0)
-                tot = data.get("total", 1)
-                ok_c = data.get("success", 0)
-                fail_c = data.get("fail", 0)
-                self.call_from_thread(overall_pbar.update, total=tot, progress=comp)
-                self.call_from_thread(
-                    self._title,
-                    f"Downloading [{comp}/{tot}] • OK: {ok_c} • FAIL: {fail_c}"
-                )
-
-        config = {
-            "links_file": self.state["mods_path"],
-            "download_dir": self.state["downloads_dir"],
-            "download_delay": 1,
-            "max_concurrent": 3,
-            "flaresolverr": {"url": self.state["fs_url"], "timeout_ms": 60000},
-            "destination": {"local_path": self.state["downloads_dir"]},
-        }
-
-        d = Downloader(config, log_callback=dl_log, on_event=on_event)
-        results = d.download_all(self.state["scan_ok"])
-        self.call_from_thread(self._download_done, results)
-
-    def _download_done(self, results: dict) -> None:
-        self._clear()
-        self._title("Downloads Finished")
-        c = self.query_one("#content", Container)
-        c.mount(Vertical(
-            Label(
-                f"[bold #00ff41]Download Batch Complete[/]\n\n"
-                f"• [green]{results['success']} Succeeded[/]\n"
-                f"{'• [red]'+str(results['fail'])+' Failed[/]\n' if results['fail'] else ''}"
-                f"• [white]Total Processed: {results['total_pending']}[/]"
-            ),
-            classes="status-panel"
-        ))
-        if results.get("fail", 0) > 0:
-            self._btn("Retry Failed Mods", "start_download", "warning")
-        if self.state["fs_mode"] == "docker":
-            self._btn("Clean up Docker", "cleanup_docker")
-        self._btn("Exit", "done")
-
-    # ── cleanup ─────────────────────────────────────────────────────
-
-    @on(Button.Pressed, "#cleanup_docker")
-    def _cleanup_btn(self) -> None:
-        self._clear()
-        self._title("Cleaning up Docker")
-        c = self.query_one("#content", Container)
-        c.mount(Label("Stopping and removing Flaresolverr container ..."))
-        self.cleanup_worker()
-
-    @work(thread=True, exclusive=True)
-    def cleanup_worker(self) -> None:
-        cleanup_docker(interactive=False, uninstall_docker=False)
-        self.call_from_thread(self._show_done, 0)
-
-    # ── done ────────────────────────────────────────────────────────
-
-    @on(Button.Pressed, "#done")
-    def _on_done_btn(self) -> None:
-        self._show_done(0)
-
-    def _show_done(self, code: int) -> None:
-        self._clear()
-        self._title("")
-        c = self.query_one("#content", Container)
-        if code == 0:
-            c.mount(Label("[bold green]All done![/]\n\nYou may close this window or press Exit."))
-        else:
-            c.mount(Label("[red]Setup stopped.[/]\n\nPlease check logs and retry."))
-        self._btn("Exit", "quit_app")
-
-    @on(Button.Pressed, "#quit_app")
-    def _quit_app(self) -> None:
-        self.exit()
+        self.push_screen(WelcomeScreen())
 
 
 def run_tui() -> None:
