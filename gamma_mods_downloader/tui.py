@@ -340,11 +340,11 @@ class StashApp(App):
 
     @on(Button.Pressed, "#validate_ip")
     def _validate_ip_btn(self) -> None:
-        self._validate_ip()
+        url = self.query_one("#fsip", Input).value.strip()
+        self._validate_ip(url)
 
     @work(thread=True)
-    def _validate_ip(self) -> None:
-        url = self.query_one("#fsip", Input).value.strip()
+    def _validate_ip(self, url: str) -> None:
         if not url.startswith("http"):
             self.call_from_thread(self._manual_ip_show, "URL must start with http:// or https://")
             return
@@ -380,7 +380,6 @@ class StashApp(App):
             if _is_windows():
                 v = _check_virtualization()
                 if not v:
-                    # Need async confirm, so we handle via call_from_thread
                     w("[red]No WSL2 or Hyper-V detected.[/]")
                     w("Docker Desktop requires one of these on Windows.")
                     w("See the README for manual setup.")
@@ -391,11 +390,13 @@ class StashApp(App):
             # Install docker
             w("Installing Docker Desktop via winget ...")
             import subprocess
-            subprocess.run(
+            res = subprocess.run(
                 ["winget", "install", "--id", "Docker.DockerDesktop",
                  "--silent", "--accept-package-agreements"],
-                capture_output=False, timeout=600,
+                capture_output=True, text=True, timeout=600,
             )
+            if res.returncode != 0:
+                w(f"[yellow]{res.stderr or 'Winget install failed.'}[/]")
             if not _find_docker():
                 w("[yellow]Docker installed. Restart the app for PATH changes.[/]")
                 self.call_from_thread(self._show_done, 0)
@@ -415,15 +416,15 @@ class StashApp(App):
         elif _docker_container_exists("flaresolverr"):
             w("Starting existing container ...")
             import subprocess
-            subprocess.run(["docker", "start", "flaresolverr"], capture_output=True)
+            subprocess.run(["docker", "start", "flaresolverr"], capture_output=True, timeout=30)
         else:
             w("Pulling flaresolverr/flaresolverr ...")
             import subprocess
-            subprocess.run(["docker", "pull", "flaresolverr/flaresolverr"], capture_output=False)
+            subprocess.run(["docker", "pull", "flaresolverr/flaresolverr"], capture_output=True, timeout=300)
             subprocess.run(
                 ["docker", "run", "-d", "--name", "flaresolverr",
                  "-p", "8191:8191", "flaresolverr/flaresolverr"],
-                capture_output=True,
+                capture_output=True, timeout=30,
             )
 
         url = "http://localhost:8191/v1"
@@ -480,21 +481,23 @@ class StashApp(App):
 
     @work(thread=True, exclusive=True)
     def scan_worker(self) -> None:
+        def log_cb(msg: str) -> None:
+            pass
+
+        def prog_cb(cur: int, tot: int, fn: str) -> None:
+            self.call_from_thread(self._title, f"Scanning [{cur}/{tot}] {fn}")
+
         stats = scan_modlist(
             self.state["mods_path"],
             self.state["downloads_dir"],
+            log_cb=log_cb,
+            progress_cb=prog_cb,
         )
         if stats is None:
             self.call_from_thread(self._show_done, 1)
             return
 
-        from .downloader import LinksFile
-        entries = LinksFile(self.state["mods_path"]).read()
-        self.state["scan_ok"] = frozenset(
-            e["filename"] for e in entries
-            if os.path.exists(os.path.join(self.state["downloads_dir"], e["filename"]))
-            and e.get("expected_md5")
-        )
+        self.state["scan_ok"] = frozenset(stats.get("ok_filenames", []))
         self.state["need_total"] = stats["need_download"] + stats["need_redownload"]
         self.call_from_thread(
             self._scan_done,
@@ -504,6 +507,7 @@ class StashApp(App):
 
     def _scan_done(self, ok: int, need: int, redo: int, total: int) -> None:
         self._clear()
+        self._title("Scan Complete")
         c = self.query_one("#content", Container)
         c.mount(Label(
             f"Scan complete.\n\n"
@@ -535,6 +539,14 @@ class StashApp(App):
 
     @work(thread=True, exclusive=True)
     def download_worker(self) -> None:
+        log = self.query_one("#dllog", RichLog)
+
+        def dl_log(msg: str) -> None:
+            self.call_from_thread(log.write, msg)
+
+        def dl_prog(cur: int, tot: int, fn: str) -> None:
+            self.call_from_thread(self._title, f"Downloading [{cur}/{tot}] {fn}")
+
         config = {
             "links_file": self.state["mods_path"],
             "download_dir": self.state["downloads_dir"],
@@ -542,15 +554,15 @@ class StashApp(App):
             "max_concurrent": 1,
             "flaresolverr": {"url": self.state["fs_url"], "timeout_ms": 60000},
             "destination": {"local_path": self.state["downloads_dir"]},
-            "tracking_file": "",
         }
 
-        d = Downloader(config)
+        d = Downloader(config, log_callback=dl_log, progress_callback=dl_prog)
         results = d.download_all(self.state["scan_ok"])
         self.call_from_thread(self._download_done, results)
 
     def _download_done(self, results: dict) -> None:
         self._clear()
+        self._title("Downloads Complete")
         c = self.query_one("#content", Container)
         c.mount(Label(
             f"[bold]Download complete.[/]\n\n"
@@ -574,7 +586,7 @@ class StashApp(App):
 
     @work(thread=True, exclusive=True)
     def cleanup_worker(self) -> None:
-        cleanup_docker()
+        cleanup_docker(interactive=False, uninstall_docker=False)
         self.call_from_thread(self._show_done, 0)
 
     # ── done ────────────────────────────────────────────────────────

@@ -27,35 +27,6 @@ def _enable_ansi() -> None:
             pass
 
 
-def ensure_admin() -> bool:
-    """
-    Re-launch with admin rights via UAC if needed.
-    Returns True if already elevated, re-launches and exits otherwise.
-    """
-    if sys.platform != "win32":
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            return True
-        print("This tool requires root privileges for Docker operations.")
-        print("Run with: sudo gamma-stash")
-        sys.exit(1)
-
-    try:
-        import ctypes
-        if ctypes.windll.shell32.IsUserAnAdmin():
-            return True
-
-        # Set inherited env var so the elevated child knows it was re-launched
-        ctypes.windll.kernel32.SetEnvironmentVariableW("GAMMA_STASH_ELEVATED", "1")
-
-        params = " ".join(f'"{a}"' for a in sys.argv)
-        ret = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, params, None, 1
-        )
-        sys.exit(0 if ret > 32 else 1)
-    except Exception:
-        pass
-
-    return True
 
 
 _enable_ansi()
@@ -79,8 +50,6 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
-ASYNC = sys.stdout.encoding != "utf-8" if hasattr(sys.stdout, "encoding") else False
-
 SPINNER_FRAMES = ["|", "/", "-", "\\"]
 BOX_H = "\u2500"
 BOX_V = "\u2502"
@@ -88,10 +57,6 @@ BOX_TL = "\u250c"
 BOX_TR = "\u2510"
 BOX_BL = "\u2514"
 BOX_BR = "\u2518"
-
-OK_MARK = "OK"
-FAIL_MARK = "FAIL"
-WARN_MARK = "WARN"
 
 
 class Spinner:
@@ -175,8 +140,6 @@ class ProgressBar:
         sys.stdout.flush()
 
 
-OFF = " " * 4
-
 def print_banner() -> None:
     """Print the G.A.M.M.A. STASH banner with version."""
     from gamma_mods_downloader import __version__, __app_name__
@@ -206,36 +169,6 @@ def print_banner() -> None:
     print(f"{GREEN}   {BOX_V}{GRAY}{tagline_centered}{GREEN}{BOX_V}{RESET}")
     print(f"{GREEN}   {border_bot}{RESET}")
     print()
-
-
-def print_status_bar(flaresolverr_url: str = "", fs_version: str = "",
-                     gamma_path: str = "", mods_total: int = 0, mods_ok: int = 0) -> None:
-    """Show persistent status bar with app state."""
-    from gamma_mods_downloader import __app_name__, __version__
-    W = 54
-    print(f"\n{GREEN}{DIM}{BOX_H * W}{RESET}")
-
-    name_line = f" {__app_name__} v{__version__}"
-    print(f"{GREEN}{BOLD}{name_line}{RESET}")
-
-    if flaresolverr_url:
-        fs_url_short = flaresolverr_url.replace("/v1", "")
-        fs_info = f"{GREEN}Connected{RESET}  {fs_url_short}"
-        if fs_version:
-            fs_info += f"  {DIM}({fs_version}){RESET}"
-    else:
-        fs_info = f"{RED}Not configured{RESET}"
-    print(f" {GRAY}Flaresolverr:{RESET} {fs_info}")
-
-    if gamma_path:
-        m = f"{mods_total} mods"
-        if mods_ok:
-            m += f", {mods_ok} OK"
-        print(f" {GRAY}GAMMA:{RESET}       {gamma_path}  {DIM}({m}){RESET}")
-    else:
-        print(f" {GRAY}GAMMA:{RESET}       {RED}Not configured{RESET}")
-
-    print(f"{GREEN}{DIM}{BOX_H * W}{RESET}\n")
 
 
 def print_header(text: str) -> None:

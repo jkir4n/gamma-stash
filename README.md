@@ -8,10 +8,11 @@
 
 ## Features
 
-- **Interactive setup wizard** — checks dependencies, auto-installs missing tools via `winget`, configures Flaresolverr (manual IP or Docker self-host)
-- **MD5-aware scanning** — checks existing files against expected hashes, skips already-downloaded mods
-- **Cloudflare bypass** — MODDB downloads via Flaresolverr; GitHub downloads directly
-- **Auto-cleanup** — after downloads, offers to stop/remove Docker containers and uninstall Docker
+- **Interactive TUI & CLI wizards** — rich G.A.M.M.A.-themed Textual TUI interface with a dedicated `--cli` fallback
+- **MD5-aware scanning** — checks existing files against expected hashes, automatically re-downloads corrupt files, and skips verified mods
+- **Atomic downloads & retries** — downloads to `.part` staging files, validates HTTP status codes, and retries failed downloads with exponential backoff
+- **Cloudflare bypass** — MODDB downloads via Flaresolverr (handles mirror and start links); GitHub downloads directly
+- **Auto-cleanup** — after downloads, offers safe cleanup of Flaresolverr containers without removing existing Docker setups
 
 ## Quick Start
 
@@ -27,17 +28,18 @@ Double-click `gamma-stash.exe` — the setup wizard walks you through everything
 2. **Flaresolverr setup** — enter IP of an existing instance, or let the tool self-host via Docker
 3. **Locate GAMMA** — point it at your GAMMA installation folder (e.g., `D:\GAMMA`)
 4. **Scan modlist** — MD5-checks every downloaded file, shows what's missing
-5. **Download** — fetches only the mods you need
-6. **Cleanup** — optionally removes Docker containers and Docker itself
+5. **Download** — fetches only the mods you need with atomic staging and retries
+6. **Cleanup** — optionally removes Flaresolverr containers
 
 ### Command Line
 
 ```
-gamma-stash             Run the setup + download wizard
-gamma-stash setup        Same as above
-gamma-stash cleanup      Stop/remove Flaresolverr container, uninstall Docker
-gamma-stash --version    Show version
-gamma-stash --help       Show help
+gamma-stash             Launch the TUI wizard (default)
+gamma-stash setup       Run the CLI wizard (no TUI)
+gamma-stash --cli       Force CLI mode for default flow
+gamma-stash cleanup     Stop/remove Flaresolverr container
+gamma-stash --version   Show version
+gamma-stash --help      Show help
 ```
 
 ## Requirements
@@ -86,11 +88,11 @@ The tool can also auto-install Docker Desktop via `winget` if missing — just s
 ## How It Works
 
 1. Parses your GAMMA `mods.txt` (tab-separated format: `URL | install_path | author | description | moddb_page | filename | MD5`)
-2. For each mod, checks if the file already exists in `downloads/` with the correct MD5 — skips if match
+2. For each mod, checks if the file already exists in `downloads/` with the correct MD5 — skips if match, flags for re-download if corrupt
 3. Downloads missing files:
    - **MODDB links** → resolves via Flaresolverr (Cloudflare bypass), extracts mirror URL, downloads with `curl`
    - **GitHub links** → downloads directly with `curl`
-4. Verifies MD5 after download, deletes and retries on mismatch
+4. Downloads stage to `.part` files, verify HTTP status, verify MD5, retry on failure, and atomically finalize
 
 ## Building from Source
 

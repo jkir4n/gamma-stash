@@ -607,22 +607,33 @@ def _find_downloads_folder(mods_path: str) -> str:
 # Modlist & download
 # ---------------------------------------------------------------------------
 
-def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
+def scan_modlist(mods_path: str, download_dir: str,
+                 log_cb: Optional[Any] = None,
+                 progress_cb: Optional[Any] = None) -> Optional[Dict[str, Any]]:
     from .downloader import LinksFile, md5_file
 
-    print_header("Scanning Modlist")
-    print_field("Mods file", mods_path)
-    print_field("Download dir", download_dir)
-    print()
+    if not log_cb:
+        print_header("Scanning Modlist")
+        print_field("Mods file", mods_path)
+        print_field("Download dir", download_dir)
+        print()
+    else:
+        log_cb(f"Scanning modlist: {mods_path}")
 
     try:
         links = LinksFile(mods_path)
         entries = links.read()
     except FileNotFoundError:
-        print_error(f"mods.txt not found at {mods_path}")
+        if not log_cb:
+            print_error(f"mods.txt not found at {mods_path}")
+        else:
+            log_cb(f"[ERROR] mods.txt not found at {mods_path}")
         return None
     except Exception as e:
-        print_error(f"Failed to parse mods.txt: {e}")
+        if not log_cb:
+            print_error(f"Failed to parse mods.txt: {e}")
+        else:
+            log_cb(f"[ERROR] Failed to parse mods.txt: {e}")
         return None
 
     total = len(entries)
@@ -642,9 +653,8 @@ def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
         for e in cat_entries:
             filename_to_cat[e["filename"]] = ci
 
-    bar = ProgressBar(total, width=36, label=f"{CYAN}Checking{RESET}")
+    bar = None if log_cb else ProgressBar(total, width=36, label=f"{CYAN}Checking{RESET}")
     spinner_idx = 0
-    last_draw = 0
 
     ok_filenames: List[str] = []
 
@@ -676,6 +686,7 @@ def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
             else:
                 if os.path.getsize(fpath) > 100:
                     already_ok += 1
+                    ok_filenames.append(filename)
                     no_md5 += 1
                 else:
                     need_download += 1
@@ -688,38 +699,44 @@ def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
             if ci is not None:
                 cat_pending[ci] += 1
 
-        extra = f"  {frame} {GREEN}{already_ok}{RESET}/{GRAY}ok{RESET}"
-        bar.update(idx + 1, extra)
+        if bar:
+            extra = f"  {frame} {GREEN}{already_ok}{RESET}/{GRAY}ok{RESET}"
+            bar.update(idx + 1, extra)
+        elif progress_cb:
+            progress_cb(idx + 1, total, filename)
 
-    bar.done()
-    print()
+    if bar:
+        bar.done()
+        print()
 
     # Summary
-    print_field("Total mods", str(total))
-    print_ok(f"Already verified: {already_ok}")
-    if need_download:
-        print_info(f"Need download: {need_download}")
-    if need_redownload:
-        print_warn(f"Need re-download: {need_redownload}")
+    if not log_cb:
+        print_field("Total mods", str(total))
+        print_ok(f"Already verified: {already_ok}")
+        if need_download:
+            print_info(f"Need download: {need_download}")
+        if need_redownload:
+            print_warn(f"Need re-download: {need_redownload}")
 
-    # Category breakdown with bar chart
-    print(f"\n  {AMBER}{BOLD}By category:{RESET}")
-    max_name = max((len(c) for c in cats), default=20)
-    for i, cat_name in enumerate(cats):
-        pending = cat_pending[i]
-        ct = cat_total[i]
-        if pending > 0:
-            bar_w = min(pending * 20 // max(ct, 1), 20) or 1
-            pbar = RED + "█" * bar_w + RESET
-            print(f"    {cat_name:<{max_name+2}} {pbar} {AMBER}{pending}{RESET}/{ct}")
-        else:
-            bar_w = min(ct * 20 // max(ct, 1), 20)
-            pbar = GREEN + "█" * bar_w + RESET
-            print(f"    {cat_name:<{max_name+2}} {pbar} {DIM}{ct}/{ct}{RESET}")
+        # Category breakdown with bar chart
+        print(f"\n  {AMBER}{BOLD}By category:{RESET}")
+        max_name = max((len(c) for c in cats), default=20)
+        for i, cat_name in enumerate(cats):
+            pending = cat_pending[i]
+            ct = cat_total[i]
+            if pending > 0:
+                bar_w = min(pending * 20 // max(ct, 1), 20) or 1
+                pbar = RED + "█" * bar_w + RESET
+                print(f"    {cat_name:<{max_name+2}} {pbar} {AMBER}{pending}{RESET}/{ct}")
+            else:
+                bar_w = min(ct * 20 // max(ct, 1), 20)
+                pbar = GREEN + "█" * bar_w + RESET
+                print(f"    {cat_name:<{max_name+2}} {pbar} {DIM}{ct}/{ct}{RESET}")
 
     if need_download == 0 and need_redownload == 0:
-        print()
-        print_ok("All mods are already downloaded and verified!")
+        if not log_cb:
+            print()
+            print_ok("All mods are already downloaded and verified!")
         return {
             "mods_path": mods_path,
             "total": total,
@@ -728,6 +745,7 @@ def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
             "need_redownload": 0,
             "moddb": moddb,
             "github": github,
+            "ok_filenames": ok_filenames,
         }
 
     return {
@@ -739,6 +757,7 @@ def scan_modlist(mods_path: str, download_dir: str) -> Optional[Dict[str, Any]]:
         "moddb": moddb,
         "github": github,
         "entries": entries,
+        "ok_filenames": ok_filenames,
     }
 
 
@@ -771,7 +790,7 @@ def write_config(config_path: str, flaresolverr_url: str, links_file: str,
         },
     }
 
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding="utf-8") as f:
         f.write("# Gamma Mods Downloader Configuration\n")
         f.write("# Generated by setup wizard.\n")
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
@@ -782,44 +801,55 @@ def write_config(config_path: str, flaresolverr_url: str, links_file: str,
 # Cleanup
 # ---------------------------------------------------------------------------
 
-def cleanup_docker() -> bool:
+def cleanup_docker(interactive: bool = True, uninstall_docker: bool = False) -> bool:
     """
-    Stop and remove the flaresolverr container, prune Docker system,
-    then offer to uninstall Docker. Returns True if cleanup was performed.
+    Stop and remove the flaresolverr container and image.
+    Optionally offers/performs Docker uninstall if requested.
     """
-    print_header("Cleanup")
+    if interactive:
+        print_header("Cleanup")
     performed = False
 
     if _docker_container_exists("flaresolverr"):
-        print_info("Stopping flaresolverr container ...")
+        if interactive:
+            print_info("Stopping flaresolverr container ...")
         subprocess.run(["docker", "stop", "flaresolverr"],
                        capture_output=True, timeout=30)
 
-        print_info("Removing flaresolverr container ...")
+        if interactive:
+            print_info("Removing flaresolverr container ...")
         subprocess.run(["docker", "rm", "flaresolverr"],
                        capture_output=True, timeout=30)
 
-        print_ok("Flaresolverr container stopped and removed.")
+        if interactive:
+            print_ok("Flaresolverr container stopped and removed.")
         performed = True
     else:
-        print_info("No flaresolverr container found.")
+        if interactive:
+            print_info("No flaresolverr container found.")
 
-    print_info("Removing Flaresolverr image ...")
+    if interactive:
+        print_info("Removing Flaresolverr image ...")
     subprocess.run(["docker", "rmi", "flaresolverr/flaresolverr"],
                    capture_output=True, timeout=30)
-    print_ok("Flaresolverr cleaned up.")
+    if interactive:
+        print_ok("Flaresolverr image cleaned up.")
 
-    print()
-    if not _prompt_yes_no("Uninstall Docker from this machine?"):
+    should_uninstall = uninstall_docker
+    if interactive:
+        print()
+        if _prompt_yes_no("Uninstall Docker Desktop from this machine?"):
+            print()
+            print_warn("Uninstalling Docker will remove it completely.")
+            print_warn("If other applications depend on Docker, they will break.")
+            if _prompt_yes_no("Are you sure you want to uninstall Docker?"):
+                should_uninstall = True
+
+    if not should_uninstall:
         return performed
 
-    print()
-    print_warn("Uninstalling Docker will remove it completely.")
-    print_warn("If other applications depend on Docker, they will break.")
-    if not _prompt_yes_no("Are you sure you want to uninstall Docker?"):
-        return performed
-
-    print_info("Uninstalling Docker ...")
+    if interactive:
+        print_info("Uninstalling Docker ...")
 
     if _is_windows():
         result = subprocess.run(
@@ -827,58 +857,39 @@ def cleanup_docker() -> bool:
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
-            print_ok("Docker uninstalled via winget.")
+            if interactive:
+                print_ok("Docker uninstalled via winget.")
+            performed = True
         else:
-            print_warn("Could not uninstall Docker automatically.")
-            print_info("Uninstall manually from Settings > Apps > Docker Desktop.")
-
-        # Remove leftover files
-        leftovers = [
-            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "Docker"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Docker"),
-            os.path.join(os.environ.get("APPDATA", ""), "Docker"),
-            os.path.expanduser("~/.docker"),
-            "C:\\ProgramData\\Docker",
-            "C:\\ProgramData\\DockerDesktop",
-        ]
-        for path in leftovers:
-            if os.path.exists(path):
-                try:
-                    import shutil
-                    shutil.rmtree(path, ignore_errors=False)
-                    print_ok(f"Removed: {path}")
-                    performed = True
-                except Exception:
-                    # Schedule deletion on next reboot for locked files
-                    try:
-                        import ctypes
-                        ctypes.windll.kernel32.MoveFileExW(
-                            path, None, 0x4  # MOVEFILE_DELAY_UNTIL_REBOOT
-                        )
-                        print_ok(f"Scheduled removal on reboot: {path}")
-                    except Exception:
-                        pass
+            if interactive:
+                print_warn("Could not uninstall Docker automatically.")
+                print_info("Uninstall manually from Settings > Apps > Docker Desktop.")
     elif sys.platform == "darwin":
-        print_info("Remove Docker.app from /Applications to uninstall.")
+        if interactive:
+            print_info("Remove Docker.app from /Applications to uninstall.")
     else:
         result = subprocess.run(
             ["sudo", "apt", "purge", "-y", "docker.io"],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
-            print_ok("Docker uninstalled.")
+            if interactive:
+                print_ok("Docker uninstalled.")
+            performed = True
         else:
             result2 = subprocess.run(
                 ["sudo", "apt", "purge", "-y", "docker-ce"],
                 capture_output=True, text=True, timeout=120,
             )
             if result2.returncode == 0:
-                print_ok("Docker uninstalled.")
-            else:
+                if interactive:
+                    print_ok("Docker uninstalled.")
+                performed = True
+            elif interactive:
                 print_warn("Could not uninstall Docker automatically.")
                 print_info("Run: sudo apt purge docker.io")
 
-    return True
+    return performed
 
 
 # ---------------------------------------------------------------------------
@@ -952,13 +963,7 @@ def run_setup_wizard() -> int:
     # Step 5: Download
     print_divider()
 
-    from .downloader import LinksFile as _Links
-    all_entries = _Links(mods_path).read()
-    skip_set = frozenset(
-        e["filename"] for e in all_entries
-        if os.path.exists(os.path.join(downloads_dir, e["filename"]))
-        and e.get("expected_md5")
-    )
+    skip_set = frozenset(stats.get("ok_filenames", []))
 
     config = {
         "links_file": mods_path,
@@ -972,14 +977,13 @@ def run_setup_wizard() -> int:
         "destination": {
             "local_path": downloads_dir,
         },
-        "tracking_file": "",
     }
 
     result = run_download(config, skip_set)
 
     if fs_mode == "docker":
         print()
-        if _prompt_yes_no("Downloads complete. Clean up Docker container and uninstall Docker?"):
-            cleanup_docker()
+        if _prompt_yes_no("Downloads complete. Clean up Flaresolverr container?"):
+            cleanup_docker(interactive=True)
 
     return result

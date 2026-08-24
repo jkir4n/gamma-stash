@@ -66,7 +66,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise
     except Exception as e:
         print(f"{RED}ERROR:{RESET} {e}", file=sys.stderr)
-        if sys.platform == "win32":
+        if sys.platform == "win32" and sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
             try:
                 input("Press Enter to exit ...")
             except Exception:

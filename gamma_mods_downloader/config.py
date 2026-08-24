@@ -38,7 +38,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "destination": {
         "local_path": "",
     },
-    "tracking_file": "",
 }
 
 
@@ -48,7 +47,7 @@ def load_config(config_path: Optional[str] = None,
     Load configuration from YAML + env var overrides.
 
     Env vars override YAML values. Use GMD_FLARESOLVERR_URL, GMD_DOWNLOAD_DIR,
-    GMD_DEST_HOST, GMD_DEST_MODE, etc.
+    GMD_LINKS_FILE, etc.
 
     If PyYAML is not available, falls back to defaults + env overrides.
     """

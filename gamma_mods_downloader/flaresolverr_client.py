@@ -68,13 +68,20 @@ class FlaresolverrClient:
         """
         Extract the ModDB mirror download URL from the mod page HTML.
 
-        ModDB mirror URLs look like: /downloads/mirror/<hash>
-        Returns the full URL (including https://www.moddb.com prefix).
+        Supports both relative (/downloads/mirror/...) and absolute URLs,
+        as well as /downloads/start/ endpoints.
         """
-        match = re.search(r'href="(/downloads/mirror/[^"]+)"', html)
+        match = re.search(r'href="((?:https?://(?:www\.)?moddb\.com)?/downloads/(?:mirror|start)/[^"]+)"', html, re.IGNORECASE)
         if not match:
-            return None
-        return "https://www.moddb.com" + match.group(1)
+            # Fallback for generic mirror hash links
+            match = re.search(r'href="(/downloads/[^"]+)"', html)
+            if not match:
+                return None
+
+        url = match.group(1)
+        if url.startswith("/"):
+            return "https://www.moddb.com" + url
+        return url
 
     def extract_cookies(self, solution: dict) -> tuple[list[dict], str]:
         """Extract cookies and User-Agent from a Flaresolverr solution."""

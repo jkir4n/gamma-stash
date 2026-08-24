@@ -6,8 +6,8 @@ Usage:
     python scripts/build_exe.py
 
 Output:
-    dist/gamma-mods-downloader.exe   (Windows)
-    dist/gamma-mods-downloader       (Linux/macOS)
+    dist/gamma-stash.exe   (Windows)
+    dist/gamma-stash       (Linux/macOS)
 """
 import os
 import shutil
