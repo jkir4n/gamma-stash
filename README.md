@@ -51,11 +51,48 @@ gamma-stash setup --mode browser            Use Browser-Assisted mode (Zero Dock
 gamma-stash setup --limit-rate 5M           Limit per-stream download speed
 gamma-stash setup --category "Weapons"      Download only matching category
 gamma-stash setup --update-manifest         Fetch latest official mods.txt from GitHub
+gamma-stash setup --no-sound                Mute S.T.A.L.K.E.R. PDA completion chime
 gamma-stash setup -y                        Run unattended (auto-yes to prompts)
 gamma-stash cleanup                         Stop/remove Flaresolverr container
 gamma-stash --version                       Show version
 gamma-stash --help                          Show help
 ```
+
+### CLI Flag Reference
+
+| Flag | Description |
+|---|---|
+| `--mode {docker,manual,browser}` | Bypass strategy: `browser` (Zero-Docker watcher), `docker` (auto-launch), or `manual` (remote IP) |
+| `--gamma-dir PATH` | Direct path to your G.A.M.M.A. installation folder |
+| `--limit-rate SPEED` | Throttle download rate per stream (e.g. `5M`, `500K`, `10M`) |
+| `--category NAME` | Download only mods matching a specific category header |
+| `--browser-dir PATH` | Custom browser downloads folder for Browser-Assisted mode (defaults to Windows `~/Downloads`) |
+| `--update-manifest` | Automatically downloads the official upstream `mods.txt` from GitHub before scanning |
+| `--no-sound` | Disables the S.T.A.L.K.E.R. PDA completion sound cue |
+| `--cli` | Force classic terminal wizard instead of the Textual TUI |
+| `-y`, `--yes` | Unattended mode: automatically answers yes to all prompts |
+
+### TUI Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| <kbd>/</kbd> | Focus the live search input in the download table |
+| <kbd>Enter</kbd> / Click | Open **Mod Actions Modal** for the selected mod (Open in Browser, Copy Link, Retry) |
+| <kbd>L</kbd> | Toggle active log panel display |
+| <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> | Navigate between buttons and table |
+| <kbd>q</kbd> | Quit application |
+
+## Download Strategies Explained
+
+1. **Browser-Assisted Mode (Recommended for Zero-Docker users)**
+   - No Docker or virtualization required.
+   - GitHub mods download concurrently in the background.
+   - When ModDB links are queued, STASH opens them in your default web browser and monitors your Windows `Downloads` directory. Once completed, it verifies the MD5 hash and moves the file atomically to `GAMMA/downloads/`.
+2. **Docker Auto-Launch Mode**
+   - Automatically spins up the official `flaresolverr/flaresolverr` Docker container in the background.
+   - Fully automated headless bypass of Cloudflare challenges without user interaction.
+3. **Remote / Existing IP Mode**
+   - Connects to an existing Flaresolverr instance running on your LAN or home server (e.g. `http://192.168.1.50:8191/v1`).
 
 ## Requirements
 
@@ -130,10 +167,11 @@ python scripts/generate_icon.py
 ```
 gamma_mods_downloader/
 ├── cli.py                      CLI entry point + commands
-├── setup.py                    Interactive setup wizard
+├── tui.py                      Screen-based Textual TUI & modals
+├── setup.py                    Interactive setup wizard + audio cues
 ├── terminal.py                 STALKER-themed colors, spinners, progress bars
-├── downloader.py               Mods.txt parser + download engine + MD5 verifier
-├── flaresolverr_client.py      Flaresolverr API client
+├── downloader.py               Mods.txt parser + parallel chunk downloader + watcher
+├── flaresolverr_client.py      Flaresolverr API client + session pooling
 ├── config.py                   Config loading (YAML, env vars)
 ├── __init__.py                 Package metadata (version, app name)
 └── __main__.py                 python -m support
