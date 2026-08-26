@@ -11,10 +11,12 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import load_config
@@ -176,6 +178,91 @@ def _format_speed(bytes_per_sec: float) -> str:
         return f"{bytes_per_sec / (1024 * 1024):.1f} MB/s"
 
 
+def open_in_browser(url: str) -> None:
+    """Open a URL in the user's default browser."""
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def watch_browser_download(filename: str,
+                           expected_md5: str,
+                           browser_downloads_dir: str,
+                           target_dir: str,
+                           timeout_sec: int = 300,
+                           status_cb: Optional[Callable[[str], None]] = None) -> bool:
+    """
+    Watches the user's browser download folder for the expected file or a newly completed file,
+    verifies MD5, and atomically moves it to the target downloads directory.
+    """
+    if not browser_downloads_dir or not os.path.isdir(browser_downloads_dir):
+        return False
+
+    start_time = time.time()
+    dest_path = os.path.join(target_dir, filename)
+
+    while time.time() - start_time < timeout_sec:
+        # 1. Direct match in browser downloads dir
+        candidate = os.path.join(browser_downloads_dir, filename)
+        temp_markers = [
+            candidate + ".crdownload",
+            candidate + ".part",
+            candidate + ".tmp",
+            candidate + ".download",
+        ]
+
+        # Check if browser is actively writing to a temp file
+        is_in_progress = any(os.path.exists(m) for m in temp_markers)
+        if is_in_progress:
+            if status_cb:
+                status_cb("Downloading via browser...")
+            time.sleep(1)
+            continue
+
+        if os.path.isfile(candidate):
+            # Verify file size stability (ensure browser finished writing)
+            sz1 = os.path.getsize(candidate)
+            time.sleep(0.8)
+            sz2 = os.path.getsize(candidate)
+            if sz1 == sz2 and sz1 > 100:
+                if expected_md5:
+                    actual = md5_file(candidate)
+                    if actual == expected_md5:
+                        if os.path.exists(dest_path):
+                            os.remove(dest_path)
+                        shutil.move(candidate, dest_path)
+                        return True
+                else:
+                    if os.path.exists(dest_path):
+                        os.remove(dest_path)
+                    shutil.move(candidate, dest_path)
+                    return True
+
+        # 2. Check for browser-renamed files (e.g. filename (1).zip) modified recently
+        try:
+            now = time.time()
+            for entry in os.scandir(browser_downloads_dir):
+                if entry.is_file() and (now - entry.stat().st_mtime < 600):
+                    name = entry.name
+                    if any(name.endswith(ext) for ext in [".crdownload", ".part", ".tmp", ".download"]):
+                        continue
+                    # If same extension and size > 100 bytes
+                    if os.path.splitext(name)[1].lower() == os.path.splitext(filename)[1].lower():
+                        if expected_md5 and entry.stat().st_size > 100:
+                            if md5_file(entry.path) == expected_md5:
+                                if os.path.exists(dest_path):
+                                    os.remove(dest_path)
+                                shutil.move(entry.path, dest_path)
+                                return True
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+    return False
+
+
 class LinksFile:
     """Manages GAMMA's mods.txt file -- tab-separated, with category headers."""
 
@@ -185,9 +272,17 @@ class LinksFile:
     def read(self) -> List[Dict[str, str]]:
         content = self._read_content()
         entries = []
+        current_cat = "Uncategorized"
         for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if _is_category_header(stripped):
+                current_cat = stripped
+                continue
             entry = _parse_entry(line)
             if entry:
+                entry["category"] = current_cat
                 entries.append(entry)
         return entries
 
@@ -236,23 +331,29 @@ class Downloader:
         self.download_dir = config["download_dir"]
         self.delay = config.get("download_delay", 1)
         self.max_concurrent = config.get("max_concurrent", 3)
+        self.fs_mode = config.get("fs_mode", "manual")
+        self.browser_downloads_dir = config.get("browser_downloads_dir", "")
+        self.limit_rate = config.get("limit_rate", "")
+        self.category_filter = config.get("category_filter", "")
+        self.selected_categories = config.get("selected_categories", None)
         self.log_callback = log_callback
         self.progress_callback = progress_callback
         self.on_event = on_event
 
         self.flare = None
         fs_cfg = config.get("flaresolverr", {})
-        if fs_cfg.get("url"):
+        if fs_cfg.get("url") and self.fs_mode != "browser":
             from .flaresolverr_client import FlaresolverrClient
             self.flare = FlaresolverrClient(
                 url=fs_cfg["url"],
                 timeout_ms=fs_cfg.get("timeout_ms", 60000),
             )
-            # Try to create a fast session
             try:
                 self.flare.create_session()
             except Exception:
                 pass
+        elif self.fs_mode == "browser":
+            self._log_ok(f"Browser-Assisted mode active (monitoring: {self.browser_downloads_dir or 'Downloads'})")
         else:
             self._log_warn("No Flaresolverr configured -- MODDB downloads will fail")
 
@@ -318,7 +419,7 @@ class Downloader:
         else:
             self._log(f"Downloading [{src_tag}] {filename} ({desc})")
 
-        self._emit("entry_start", {"filename": filename, "source": source, "description": desc})
+        self._emit("entry_start", {"filename": filename, "source": source, "description": desc, "url": url, "moddb_page": entry.get("moddb_page", "")})
 
         # Check if already downloaded and verified
         if os.path.exists(local_path):
@@ -341,7 +442,41 @@ class Downloader:
                         self._emit("entry_complete", {"filename": filename, "status": "OK", "cached": True})
                         return True
 
-        # Retry loop for download with HTTP Range resume support
+        # Browser-Assisted Mode for ModDB links
+        if source != "GITHUB" and self.fs_mode == "browser":
+            mod_url = entry.get("moddb_page") or url
+            self._log_warn(f"Opening {filename} in your browser...")
+            open_in_browser(mod_url)
+            self._emit("entry_browser_waiting", {"filename": filename, "url": mod_url})
+
+            def status_cb(st: str):
+                self._emit("entry_progress", {
+                    "filename": filename,
+                    "speed_str": st,
+                    "size_str": "",
+                })
+
+            ok = watch_browser_download(
+                filename=filename,
+                expected_md5=expected_md5,
+                browser_downloads_dir=self.browser_downloads_dir,
+                target_dir=self.download_dir,
+                timeout_sec=300,
+                status_cb=status_cb,
+            )
+            if ok:
+                entry["status"] = "DOWNLOADED"
+                actual_md5 = cached_md5_file(local_path, self.cache)
+                entry["actual_md5"] = actual_md5
+                self._copy_to_destination(local_path, filename)
+                self._emit("entry_complete", {"filename": filename, "status": "OK", "cached": False})
+                return True
+            else:
+                self._log_error(f"Browser download for {filename} timed out or cancelled.")
+                self._emit("entry_error", {"filename": filename, "error": "Browser download timeout"})
+                return False
+
+        # Retry loop for automated download with HTTP Range resume support
         for attempt in range(1, max_retries + 1):
             if attempt > 1:
                 self._log_warn(f"Retry {attempt}/{max_retries} for {filename} ...")
@@ -396,8 +531,85 @@ class Downloader:
                 return True
 
         self._log_error(f"Failed to download {filename} after {max_retries} attempts.")
-        self._emit("entry_error", {"filename": filename, "error": f"Failed after {max_retries} retries"})
+        self._emit("entry_error", {"filename": filename, "error": f"Failed after {max_retries} retries", "url": url, "moddb_page": entry.get("moddb_page", "")})
         return False
+
+    def _probe_url(self, url: str) -> Tuple[int, bool]:
+        """Check Content-Length and Range support via curl HEAD request."""
+        try:
+            res = subprocess.run(
+                ["curl", "-sIL", "--head", "--max-time", "8", url],
+                capture_output=True, text=True, timeout=10
+            )
+            headers = res.stdout.lower()
+            range_ok = "accept-ranges: bytes" in headers
+            size = 0
+            for line in headers.splitlines():
+                if line.startswith("content-length:"):
+                    try:
+                        size = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+            return size, range_ok
+        except Exception:
+            return 0, False
+
+    def _download_segmented(self, url: str, part_path: str, display_name: str, total_size: int, num_chunks: int = 3) -> bool:
+        """Download large file in parallel byte-range chunks."""
+        chunk_size = total_size // num_chunks
+        chunk_files = []
+        chunk_tasks = []
+
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = (start + chunk_size - 1) if i < num_chunks - 1 else (total_size - 1)
+            cf = f"{part_path}.chk{i}"
+            chunk_files.append(cf)
+            chunk_tasks.append((start, end, cf))
+
+        def get_chunk(args):
+            s, e, out = args
+            cmd = ["curl", "-sL", "-r", f"{s}-{e}", "-o", out, "--max-time", "600"]
+            if self.limit_rate:
+                cmd.extend(["--limit-rate", self.limit_rate])
+            cmd.append(url)
+            r = subprocess.run(cmd, capture_output=True, timeout=660)
+            return r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) == (e - s + 1)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_chunks) as executor:
+            results = list(executor.map(get_chunk, chunk_tasks))
+
+        if all(results) and all(os.path.exists(cf) for cf in chunk_files):
+            try:
+                with open(part_path, "wb") as outfile:
+                    for cf in chunk_files:
+                        with open(cf, "rb") as infile:
+                            shutil.copyfileobj(infile, outfile)
+                        try:
+                            os.remove(cf)
+                        except Exception:
+                            pass
+                return True
+            except Exception:
+                pass
+
+        for cf in chunk_files:
+            if os.path.exists(cf):
+                try:
+                    os.remove(cf)
+                except Exception:
+                    pass
+        return False
+
+    def _download_github(self, url: str, part_path: str, display_name: str) -> bool:
+        # Check size and range support for large file parallel acceleration
+        size, range_ok = self._probe_url(url)
+        if range_ok and size >= 50 * 1024 * 1024:
+            self._log(f"Accelerating {display_name} via 3 parallel segments ({_format_size(size)})")
+            ok = self._download_segmented(url, part_path, display_name, size, num_chunks=3)
+            if ok:
+                return True
+        return self._curl_download(url, part_path, display_name)
 
     def _download_moddb(self, url: str, part_path: str, display_name: str) -> bool:
         if not self.flare:
@@ -432,11 +644,18 @@ class Downloader:
         cookies = sol.get("cookies", [])
         user_agent = sol.get("userAgent", "")
 
-        return self._curl_download(mirror_url, part_path, display_name, user_agent,
-                                   self.flare.build_cookie_header(cookies))
+        ok = self._curl_download(mirror_url, part_path, display_name, user_agent,
+                                 self.flare.build_cookie_header(cookies))
+        if ok:
+            return True
 
-    def _download_github(self, url: str, part_path: str, display_name: str) -> bool:
-        return self._curl_download(url, part_path, display_name)
+        # Mirror Failover: if initial mirror failed, try fallback endpoint
+        self._log_warn(f"Primary mirror failed for {display_name}, attempting mirror failover...")
+        alt_url = url.replace("/downloads/start/", "/downloads/mirror/").rstrip("/all")
+        if alt_url != mirror_url and alt_url != url:
+            return self._curl_download(alt_url, part_path, display_name, user_agent,
+                                       self.flare.build_cookie_header(cookies))
+        return False
 
     def _curl_download(self, url: str, part_path: str, display_name: str,
                        user_agent: str = "", cookie: str = "") -> bool:
@@ -446,6 +665,8 @@ class Downloader:
         cmd = ["curl", "-sL", "-o", part_path, "-w", "%{http_code}", "--max-time", "600"]
         if os.path.exists(part_path) and os.path.getsize(part_path) > 0:
             cmd.extend(["-C", "-"])
+        if self.limit_rate:
+            cmd.extend(["--limit-rate", self.limit_rate])
         if user_agent:
             cmd.extend(["-A", user_agent])
         if cookie:
@@ -530,6 +751,12 @@ class Downloader:
             pending = [e for e in pending_all if e["filename"] not in skip_filenames]
         else:
             pending = pending_all
+
+        # Filter by category if requested
+        if self.selected_categories:
+            pending = [e for e in pending if e.get("category") in self.selected_categories]
+        elif self.category_filter:
+            pending = [e for e in pending if self.category_filter.lower() in e.get("category", "").lower()]
 
         if not self.log_callback:
             print(f"\n  {BOLD}Downloading{RESET}  {GRAY}{len(pending)} mods{RESET}")

@@ -3,8 +3,9 @@ Textual TUI for G.A.M.M.A. STASH — interactive setup + next-gen download manag
 """
 
 import os
-import asyncio
-from typing import Any, Dict, List, Optional
+import sys
+import time
+from typing import Any, Dict, List, Optional, Set
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -22,8 +23,9 @@ from .setup import (
     _is_gamma_folder, _find_mods_txt, _find_downloads_folder,
     scan_modlist, cleanup_docker, _check_virtualization, _is_windows,
     discover_gamma_paths, check_disk_space,
+    get_windows_downloads_dir, play_pda_cue, copy_to_clipboard, fetch_latest_mods_txt,
 )
-from .downloader import Downloader
+from .downloader import Downloader, open_in_browser, watch_browser_download, LinksFile
 
 
 # ── G.A.M.M.A. PDA Theme ─────────────────────────────────────────────
@@ -77,6 +79,57 @@ class BaseStashScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
+# Mod Action Modal (Click/Enter on DataTable Row)
+# ---------------------------------------------------------------------------
+
+class ModActionModal(ModalScreen[None]):
+    """Modal dialog for individual mod actions (open in browser, retry, copy link)."""
+
+    def __init__(self, mod_info: Dict[str, Any]) -> None:
+        super().__init__()
+        self.mod_info = mod_info
+
+    def compose(self) -> ComposeResult:
+        fn = self.mod_info.get("filename", "")
+        src = self.mod_info.get("source", "MODDB")
+        url = self.mod_info.get("url", "")
+        page = self.mod_info.get("moddb_page", "") or url
+        md5 = self.mod_info.get("expected_md5", "")
+
+        yield Vertical(
+            Label(f"[bold #ffb000]{fn}[/]\n"),
+            Label(f"Source: [cyan]{src}[/]"),
+            Label(f"URL: [dim]{page[:50]}...[/]"),
+            Label(f"MD5: [dim]{md5[:16]}...[/]\n"),
+            Horizontal(
+                Button("Open in Browser", variant="primary", id="act_browser"),
+                Button("Copy Link", variant="default", id="act_copy"),
+                Button("Close", variant="error", id="act_close"),
+                id="action_buttons",
+            ),
+            id="action_dialog",
+        )
+
+    @on(Button.Pressed, "#act_browser")
+    def on_browser(self) -> None:
+        url = self.mod_info.get("moddb_page", "") or self.mod_info.get("url", "")
+        open_in_browser(url)
+        self.notify("Opened link in browser! Monitoring Downloads folder...")
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#act_copy")
+    def on_copy(self) -> None:
+        url = self.mod_info.get("moddb_page", "") or self.mod_info.get("url", "")
+        copy_to_clipboard(url)
+        self.notify("Link copied to clipboard!")
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#act_close")
+    def on_close(self) -> None:
+        self.dismiss(None)
+
+
+# ---------------------------------------------------------------------------
 # Screens
 # ---------------------------------------------------------------------------
 
@@ -87,10 +140,10 @@ class WelcomeScreen(BaseStashScreen):
             Vertical(
                 Label(
                     "\n[bold #00ff41]Welcome to G.A.M.M.A. STASH[/]\n\n"
-                    "• [white]Concurrent downloads for GitHub direct links[/]\n"
+                    "• [white]Concurrent downloads & Multi-segment acceleration for large files[/]\n"
                     "• [white]Sub-second hash caching & HTTP Range resume[/]\n"
-                    "• [white]Flaresolverr session pooling for fast ModDB mirror resolution[/]\n"
-                    "• [white]Auto-discovery of G.A.M.M.A. installations & free disk space[/]\n"
+                    "• [white]Zero-Docker Browser-Assisted mode or Flaresolverr session pooling[/]\n"
+                    "• [white]Auto-discovery of G.A.M.M.A. installations & selective category downloads[/]\n"
                 ),
                 classes="status-panel",
             ),
@@ -171,24 +224,31 @@ class DepsScreen(BaseStashScreen):
 
 class FlareChoiceScreen(BaseStashScreen):
     def compose(self) -> ComposeResult:
-        yield from self.compose_header("Flaresolverr Cloudflare Bypass")
+        yield from self.compose_header("Download Strategy")
         yield Container(
             Vertical(
                 Label(
-                    "Flaresolverr is used to resolve Cloudflare challenges on ModDB.\n\n"
-                    "Select configuration mode:"
+                    "Choose how to bypass Cloudflare challenges on ModDB:\n\n"
+                    "• [green]Browser-Assisted[/]: Zero Docker required. Downloads directly via browser watcher.\n"
+                    "• [cyan]Docker Auto-Launch[/]: Runs local Flaresolverr in background container.\n"
+                    "• [yellow]Remote IP[/]: Connects to existing Flaresolverr instance on your network."
                 ),
                 classes="status-panel",
             ),
             id="content",
         )
         yield Horizontal(
+            Button("Browser-Assisted (No Docker)", variant="warning", id="flare_browser_btn"),
             Button("Docker (Auto-Launch)", variant="primary", id="flare_docker_btn"),
-            Button("Remote / Existing IP", variant="primary", id="flare_manual_btn"),
+            Button("Remote / Existing IP", variant="default", id="flare_manual_btn"),
             Button("Back", variant="default", id="back_btn"),
             id="buttons",
         )
         yield Footer()
+
+    @on(Button.Pressed, "#flare_browser_btn")
+    def on_browser_choice(self) -> None:
+        self.app.push_screen(BrowserAssistedScreen())
 
     @on(Button.Pressed, "#flare_docker_btn")
     def on_docker(self) -> None:
@@ -197,6 +257,43 @@ class FlareChoiceScreen(BaseStashScreen):
     @on(Button.Pressed, "#flare_manual_btn")
     def on_manual(self) -> None:
         self.app.push_screen(ManualIPScreen())
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
+
+
+class BrowserAssistedScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Browser-Assisted Mode (Zero Docker)")
+        default_dl = get_windows_downloads_dir()
+        yield Container(
+            Vertical(
+                Label(
+                    "[bold #00ff41]Zero-Docker Cloudflare Bypass Active[/]\n\n"
+                    "• GitHub mods will download directly at maximum speed.\n"
+                    "• ModDB links will open in your default web browser.\n"
+                    "• STASH monitors your Downloads folder and auto-verifies and moves each mod.\n\n"
+                    f"[dim]Browser Downloads Folder:[/]\n"
+                ),
+                Input(value=default_dl, id="browser_dl_path"),
+                classes="status-panel",
+            ),
+            id="content",
+        )
+        yield Horizontal(
+            Button("Continue", variant="primary", id="continue_browser_btn"),
+            Button("Back", variant="default", id="back_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#continue_browser_btn")
+    def on_continue(self) -> None:
+        dl_path = self.query_one("#browser_dl_path", Input).value.strip()
+        self.app.state["fs_mode"] = "browser"
+        self.app.state["browser_downloads_dir"] = dl_path or get_windows_downloads_dir()
+        self.app.push_screen(PathSelectScreen())
 
     @on(Button.Pressed, "#back_btn")
     def on_back(self) -> None:
@@ -323,7 +420,6 @@ class DockerScreen(BaseStashScreen):
             if ok:
                 w(f"[green]Flaresolverr active: {msg}[/]")
                 break
-            import time
             time.sleep(1)
 
         self.app.state["fs_url"] = url
@@ -361,6 +457,7 @@ class PathSelectScreen(BaseStashScreen):
         yield Container(*widgets, id="content")
         yield Horizontal(
             Button("Validate Path", variant="primary", id="validate_path_btn"),
+            Button("Fetch mods.txt from GitHub", variant="default", id="fetch_manifest_btn"),
             Button("Back", variant="default", id="back_btn"),
             id="buttons",
         )
@@ -377,7 +474,7 @@ class PathSelectScreen(BaseStashScreen):
                 self.app.state["mods_path"] = selected["mods_txt"]
                 self.app.state["downloads_dir"] = _find_downloads_folder(selected["mods_txt"])
                 os.makedirs(self.app.state["downloads_dir"], exist_ok=True)
-                self.app.push_screen(ScanScreen())
+                self.app.push_screen(CategorySelectScreen())
 
     @on(Button.Pressed, "#validate_path_btn")
     def on_validate(self) -> None:
@@ -394,11 +491,68 @@ class PathSelectScreen(BaseStashScreen):
         self.app.state["mods_path"] = _find_mods_txt(expanded)
         self.app.state["downloads_dir"] = _find_downloads_folder(self.app.state["mods_path"])
         os.makedirs(self.app.state["downloads_dir"], exist_ok=True)
-        self.app.push_screen(ScanScreen())
+        self.app.push_screen(CategorySelectScreen())
+
+    @on(Button.Pressed, "#fetch_manifest_btn")
+    def on_fetch_manifest(self) -> None:
+        path = self.query_one("#gpath", Input).value.strip().strip('"')
+        err = self.query_one("#path_err", Label)
+        if not path:
+            err.update("[red]Enter destination folder first.[/]")
+            return
+        expanded = os.path.expandvars(os.path.expanduser(path))
+        fetched = fetch_latest_mods_txt(expanded)
+        if fetched:
+            self.notify("Successfully downloaded official mods.txt from GitHub!")
+            self.app.state["mods_path"] = fetched
+            self.app.state["downloads_dir"] = _find_downloads_folder(fetched)
+            os.makedirs(self.app.state["downloads_dir"], exist_ok=True)
+            self.app.push_screen(CategorySelectScreen())
+        else:
+            err.update("[red]Failed to fetch mods.txt from GitHub.[/]")
 
     @on(Button.Pressed, "#back_btn")
     def on_back(self) -> None:
         self.app.pop_screen()
+
+
+class CategorySelectScreen(BaseStashScreen):
+    def compose(self) -> ComposeResult:
+        yield from self.compose_header("Select Mod Categories")
+        links = LinksFile(self.app.state["mods_path"])
+        cats, entries_by_cat = links.read_with_categories()
+
+        widgets = [
+            Label("[bold #00ff41]Select Categories to Process:[/]\n[dim]Choose 'All Categories' or select a specific mod category to download.[/]\n")
+        ]
+        widgets.append(Button("★ All Categories (Full Modpack)", variant="primary", id="cat_all"))
+        for i, c in enumerate(cats):
+            cnt = len(entries_by_cat[i])
+            widgets.append(Button(f"{c} ({cnt} mods)", id=f"cat_{i}", variant="default"))
+
+        yield Container(ScrollableContainer(*widgets), id="content")
+        yield Horizontal(
+            Button("Back", variant="default", id="back_btn"),
+            id="buttons",
+        )
+        yield Footer()
+
+    @on(Button.Pressed)
+    def on_category_button(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id or ""
+        if btn_id == "cat_all":
+            self.app.state["selected_categories"] = None
+            self.app.push_screen(ScanScreen())
+        elif btn_id.startswith("cat_"):
+            idx = int(btn_id.split("_")[1])
+            links = LinksFile(self.app.state["mods_path"])
+            cats, _ = links.read_with_categories()
+            if 0 <= idx < len(cats):
+                selected_cat = cats[idx]
+                self.app.state["selected_categories"] = {selected_cat}
+                self.app.push_screen(ScanScreen())
+        elif btn_id == "back_btn":
+            self.app.pop_screen()
 
 
 class ScanScreen(BaseStashScreen):
@@ -506,11 +660,32 @@ class ScanSummaryScreen(BaseStashScreen):
 
 
 class DownloadScreen(BaseStashScreen):
+    BINDINGS = [
+        ("slash", "focus_search", "Search Filter"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries_info: Dict[str, Dict[str, Any]] = {}
+        self.start_time: float = time.time()
+        self.total_bytes_transferred: int = 0
+        self.peak_speed: float = 0.0
+
     def compose(self) -> ComposeResult:
         yield from self.compose_header("Downloading G.A.M.M.A. Mods")
         overall_pbar = ProgressBar(total=self.app.state["need_total"] or 1, id="pbar_overall", show_eta=True)
         active_pbar = ProgressBar(total=100, id="pbar_active")
         telemetry = Label("Initializing worker threads...", id="telemetry_label", classes="telemetry")
+
+        search_bar = Input(placeholder="Search mods by name or author (press /)...", id="table_search")
+
+        filter_chips = Horizontal(
+            Button("All", variant="primary", id="filter_all"),
+            Button("Active", variant="default", id="filter_active"),
+            Button("Failed", variant="error", id="filter_failed"),
+            Button("Completed", variant="default", id="filter_completed"),
+            id="filter_chips",
+        )
 
         table = DataTable(id="mod_table")
         table.cursor_type = "row"
@@ -525,6 +700,8 @@ class DownloadScreen(BaseStashScreen):
                 overall_pbar,
                 Label("[dim]Active File:[/]", classes="dim"),
                 active_pbar,
+                search_bar,
+                filter_chips,
                 table,
                 log,
             ),
@@ -538,7 +715,32 @@ class DownloadScreen(BaseStashScreen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.start_time = time.time()
         self.download_worker()
+
+    def action_focus_search(self) -> None:
+        try:
+            self.query_one("#table_search", Input).focus()
+        except Exception:
+            pass
+
+    @on(Input.Changed, "#table_search")
+    def on_search_changed(self, event: Input.Changed) -> None:
+        query = event.value.strip().lower()
+        table = self.query_one("#mod_table", DataTable)
+        for row_key in table.rows:
+            if query in str(row_key.value).lower():
+                try:
+                    table.move_cursor(row=table.get_row_index(row_key))
+                    break
+                except Exception:
+                    pass
+
+    @on(DataTable.RowSelected, "#mod_table")
+    def on_row_selected(self, event: DataTable.RowSelected) -> None:
+        fn = str(event.row_key.value) if event.row_key else ""
+        info = self.entries_info.get(fn, {"filename": fn})
+        self.app.push_screen(ModActionModal(info))
 
     @work(thread=True, exclusive=True)
     def download_worker(self) -> None:
@@ -553,6 +755,9 @@ class DownloadScreen(BaseStashScreen):
 
         def on_event(event_type: str, data: dict) -> None:
             fn = data.get("filename", "")
+            if fn and fn not in self.entries_info:
+                self.entries_info[fn] = data
+
             if event_type == "entry_start":
                 src = data.get("source", "MODDB")
                 self.app.call_from_thread(
@@ -562,12 +767,23 @@ class DownloadScreen(BaseStashScreen):
                 )
                 self.app.call_from_thread(table.scroll_end, animate=False)
                 self.app.call_from_thread(active_pbar.update, progress=0)
+            elif event_type == "entry_browser_waiting":
+                try:
+                    self.app.call_from_thread(table.update_cell, fn, "Status", "[bold yellow]🌐 BROWSER[/]")
+                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", "Waiting ~/Downloads")
+                except Exception:
+                    pass
             elif event_type == "entry_progress":
                 speed_str = data.get("speed_str", "")
                 size_str = data.get("size_str", "")
+                speed_bps = data.get("speed", 0)
+                if speed_bps > self.peak_speed:
+                    self.peak_speed = speed_bps
+
+                elapsed = time.time() - self.start_time
                 self.app.call_from_thread(
                     telemetry.update,
-                    f"[bold #ffb000]{fn[:30]}[/]  •  [green]{speed_str}[/]  •  [white]{size_str}[/]"
+                    f"[bold #ffb000]{fn[:28]}[/] • [green]{speed_str}[/] • [white]{size_str}[/] • [dim]Peak: {self.peak_speed/(1024*1024):.1f} MB/s[/]"
                 )
                 try:
                     self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", speed_str)
@@ -582,14 +798,12 @@ class DownloadScreen(BaseStashScreen):
             elif event_type == "entry_error":
                 try:
                     self.app.call_from_thread(table.update_cell, fn, "Status", "[bold red]✗ FAIL[/]")
-                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", "Failed")
+                    self.app.call_from_thread(table.update_cell, fn, "Transfer Speed", "Failed (Click for options)")
                 except Exception:
                     pass
             elif event_type == "overall_progress":
                 comp = data.get("completed", 0)
                 tot = data.get("total", 1)
-                ok_c = data.get("success", 0)
-                fail_c = data.get("fail", 0)
                 self.app.call_from_thread(overall_pbar.update, total=tot, progress=comp)
 
         config = {
@@ -599,10 +813,14 @@ class DownloadScreen(BaseStashScreen):
             "max_concurrent": 3,
             "flaresolverr": {"url": self.app.state["fs_url"], "timeout_ms": 60000},
             "destination": {"local_path": self.app.state["downloads_dir"]},
+            "fs_mode": self.app.state.get("fs_mode", "manual"),
+            "browser_downloads_dir": self.app.state.get("browser_downloads_dir", ""),
+            "selected_categories": self.app.state.get("selected_categories", None),
         }
 
         d = Downloader(config, log_callback=dl_log, on_event=on_event)
         results = d.download_all(self.app.state["scan_ok"])
+        play_pda_cue()
         self.app.call_from_thread(self.app.push_screen, SummaryScreen(results))
 
     @on(Button.Pressed, "#toggle_log_btn")
@@ -648,6 +866,9 @@ class SummaryScreen(BaseStashScreen):
 
         yield Horizontal(*buttons, id="buttons")
         yield Footer()
+
+    def on_mount(self) -> None:
+        play_pda_cue()
 
     @on(Button.Pressed, "#retry_btn")
     def on_retry(self) -> None:
@@ -711,6 +932,28 @@ class StashApp(App):
         padding: 1 2;
         align: center middle;
     }
+    #filter_chips {
+        height: auto;
+        margin: 1 0;
+        align: center middle;
+    }
+    #filter_chips Button {
+        margin: 0 1;
+        min-width: 10;
+        height: 1;
+    }
+    #action_dialog {
+        background: #0d140d;
+        border: thick #00ff41;
+        padding: 2 3;
+        width: 72;
+        height: auto;
+        align: center middle;
+    }
+    #action_buttons {
+        align: center middle;
+        margin-top: 1;
+    }
     Button {
         margin: 0 1;
         border: solid #00ff41;
@@ -765,11 +1008,13 @@ class StashApp(App):
         self.state: Dict[str, Any] = {
             "fs_url": "",
             "fs_mode": "",
+            "browser_downloads_dir": "",
             "mods_path": "",
             "downloads_dir": "",
             "scan_ok": frozenset(),
             "need_total": 0,
             "scan_stats": {},
+            "selected_categories": None,
         }
 
     def on_mount(self) -> None:

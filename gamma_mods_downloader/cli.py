@@ -12,17 +12,31 @@ import argparse
 import sys
 from typing import List, Optional
 
-from .setup import run_setup_wizard, cleanup_docker
+from .setup import run_setup_wizard, cleanup_docker, fetch_latest_mods_txt
 from .terminal import (
-    RED, RESET,
+    RED, RESET, print_ok, print_error,
 )
 from . import __version__
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if getattr(args, "update_manifest", False):
+        gamma_dir = getattr(args, "gamma_dir", None)
+        if gamma_dir:
+            print_ok("Fetching latest official mods.txt from GitHub...")
+            fetch_latest_mods_txt(gamma_dir)
+        else:
+            print_error("--update-manifest requires --gamma-dir to specify destination.")
+            return 1
+
     return run_setup_wizard(
         gamma_dir=getattr(args, "gamma_dir", None),
         flaresolverr_url=getattr(args, "flaresolverr_url", None),
+        mode=getattr(args, "mode", None),
+        limit_rate=getattr(args, "limit_rate", None),
+        no_sound=getattr(args, "no_sound", False),
+        category=getattr(args, "category", None),
+        browser_dir=getattr(args, "browser_dir", None),
         yes=getattr(args, "yes", False),
     )
 
@@ -50,6 +64,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to GAMMA installation folder")
     parser.add_argument("--flaresolverr-url", type=str, default=None,
                         help="URL of Flaresolverr instance (e.g. http://localhost:8191)")
+    parser.add_argument("--mode", choices=["docker", "manual", "browser"], default=None,
+                        help="Cloudflare bypass strategy: docker, manual, or browser (zero-docker)")
+    parser.add_argument("--limit-rate", type=str, default=None,
+                        help="Limit download speed per stream (e.g. 5M, 500K)")
+    parser.add_argument("--category", type=str, default=None,
+                        help="Download only mods matching this category name")
+    parser.add_argument("--browser-dir", type=str, default=None,
+                        help="Path to browser downloads folder for Browser-Assisted mode")
+    parser.add_argument("--no-sound", action="store_true",
+                        help="Mute S.T.A.L.K.E.R. PDA completion chime")
+    parser.add_argument("--update-manifest", action="store_true",
+                        help="Download latest official mods.txt from GitHub before scanning")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Automatic yes to prompts; run unattended")
     sub = parser.add_subparsers(dest="command")
@@ -59,6 +85,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                          help="Path to GAMMA installation folder")
     p_setup.add_argument("--flaresolverr-url", type=str, default=None,
                          help="URL of Flaresolverr instance (e.g. http://localhost:8191)")
+    p_setup.add_argument("--mode", choices=["docker", "manual", "browser"], default=None,
+                         help="Cloudflare bypass strategy: docker, manual, or browser (zero-docker)")
+    p_setup.add_argument("--limit-rate", type=str, default=None,
+                         help="Limit download speed per stream (e.g. 5M, 500K)")
+    p_setup.add_argument("--category", type=str, default=None,
+                         help="Download only mods matching this category name")
+    p_setup.add_argument("--browser-dir", type=str, default=None,
+                         help="Path to browser downloads folder for Browser-Assisted mode")
+    p_setup.add_argument("--no-sound", action="store_true",
+                         help="Mute S.T.A.L.K.E.R. PDA completion chime")
+    p_setup.add_argument("--update-manifest", action="store_true",
+                         help="Download latest official mods.txt from GitHub before scanning")
     p_setup.add_argument("-y", "--yes", action="store_true",
                          help="Automatic yes to prompts; run unattended")
     p_setup.set_defaults(func=cmd_setup)

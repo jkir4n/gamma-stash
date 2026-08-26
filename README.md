@@ -9,13 +9,18 @@
 ## Features
 
 - **Next-Gen TUI & CLI managers** — rich Textual TUI with live `DataTable`, dual progress bars, speed telemetry, and a dedicated `--cli` fallback
-- **High-throughput concurrent downloads** — parallel worker pool for GitHub direct downloads alongside sequential ModDB handling
+- **Zero-Docker Browser-Assisted Mode** — bypass Cloudflare without Docker by opening ModDB in your browser while STASH automatically monitors `~/Downloads`, verifies MD5, and moves completed mods into place
+- **Multi-Segment Parallel Download Accelerator** — splits large GitHub archives (>50 MB) into 3 parallel byte-range streams (`curl -r`) for maximum download speed
+- **High-throughput concurrent downloads** — parallel worker pool for GitHub direct downloads alongside persistent Flaresolverr queueing
 - **Sub-second hash caching** — `.stash_cache.json` metadata cache avoids redundant full-disk re-hashing
+- **Live Search & Category Filtering** — search through mods in real time (<kbd>/</kbd>) or download specific mod categories
+- **Interactive 1-Click Mod Actions** — click any mod row in the TUI to open in browser, copy direct download links, or retry
+- **Online Manifest Sync** — auto-fetch the latest official `mods.txt` from GitHub directly within the app or via `--update-manifest`
+- **Bandwidth Throttling** — cap per-stream transfer speed with `--limit-rate` (e.g. `5M`, `500K`)
+- **S.T.A.L.K.E.R. PDA Audio Cues** — authentic two-tone PDA chime alerts you upon download batch completion
 - **HTTP `Range` resume** — interrupted downloads resume from their last byte on partial `.part` files
 - **Flaresolverr session pooling** — persistent browser sessions drop Cloudflare resolution times from ~12s to ~2s per link
 - **Auto-discovery & disk safety** — auto-detects G.A.M.M.A. paths across all drives and verifies available disk space
-- **Atomic downloads & retries** — downloads stage to `.part` files and rename atomically upon verified HTTP status and MD5 matches
-- **Auto-cleanup** — after downloads, offers safe cleanup of Flaresolverr containers without removing existing Docker setups
 
 ## Quick Start
 
@@ -28,11 +33,12 @@ Grab the latest `gamma-stash.exe` from [Releases](https://github.com/jkir4n/gamm
 Double-click `gamma-stash.exe` — the setup wizard walks you through everything:
 
 1. **Dependency check** — ensures `curl` is on PATH (auto-installs via winget if missing)
-2. **Flaresolverr setup** — enter IP of an existing instance, or let the tool self-host via Docker
-3. **Locate GAMMA** — auto-detects installation paths or lets you enter a custom folder
-4. **Scan modlist** — fast cached MD5 verification shows missing or corrupted mods
-5. **Download** — high-speed concurrent batch downloading with resume support
-6. **Cleanup** — optionally removes Flaresolverr containers
+2. **Strategy selection** — choose **Browser-Assisted (Zero Docker)**, **Docker Auto-Launch**, or **Remote IP**
+3. **Locate GAMMA** — auto-detects installation paths or lets you enter a custom folder (or fetch `mods.txt` from GitHub)
+4. **Category selection** — download the entire modpack or select specific categories
+5. **Scan modlist** — fast cached MD5 verification shows missing or corrupted mods
+6. **Download** — high-speed concurrent batch downloading with multi-segment acceleration and resume support
+7. **Done** — S.T.A.L.K.E.R. PDA audio alert signals completion!
 
 ### Command Line
 
@@ -41,6 +47,10 @@ gamma-stash                                 Launch the TUI wizard (default)
 gamma-stash setup                           Run the CLI wizard (no TUI)
 gamma-stash --cli                           Force CLI mode for default flow
 gamma-stash setup --gamma-dir "D:\GAMMA"    Specify GAMMA folder directly
+gamma-stash setup --mode browser            Use Browser-Assisted mode (Zero Docker)
+gamma-stash setup --limit-rate 5M           Limit per-stream download speed
+gamma-stash setup --category "Weapons"      Download only matching category
+gamma-stash setup --update-manifest         Fetch latest official mods.txt from GitHub
 gamma-stash setup -y                        Run unattended (auto-yes to prompts)
 gamma-stash cleanup                         Stop/remove Flaresolverr container
 gamma-stash --version                       Show version

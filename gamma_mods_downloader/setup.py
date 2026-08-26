@@ -505,25 +505,29 @@ def _wait_for_flaresolverr(url: str) -> str:
 
 def configure_flaresolverr() -> Optional[Tuple[str, str]]:
     """
-    Returns (url, mode) on success — mode is 'manual' or 'docker'.
+    Returns (url, mode) on success — mode is 'manual', 'docker', or 'browser'.
     """
-    print_header("Flaresolverr Configuration")
-    print_info("Flaresolverr is required to bypass Cloudflare on ModDB downloads.")
+    print_header("Download & Cloudflare Strategy")
+    print_info("Select how to handle ModDB Cloudflare challenges:")
     print()
-    print(f"  {AMBER}1.{RESET} Enter IP/URL of an existing Flaresolverr instance")
+    print(f"  {AMBER}1.{RESET} Remote / Existing Flaresolverr IP")
     print(f"  {AMBER}2.{RESET} Self-host Flaresolverr via Docker (this machine)")
+    print(f"  {AMBER}3.{RESET} Browser-Assisted Mode {GREEN}(Zero Docker / Zero Setup){RESET}")
     print()
 
     while True:
-        choice = input(f"  {AMBER}Option{RESET} {DIM}(1/2)> {RESET}").strip()
+        choice = input(f"  {AMBER}Option{RESET} {DIM}(1/2/3)> {RESET}").strip()
         if choice == "1":
             url = setup_manual_flaresolverr()
             return (url, "manual") if url else None
         elif choice == "2":
             url = setup_docker_flaresolverr()
             return (url, "docker") if url else None
+        elif choice == "3":
+            print_ok("Browser-Assisted Mode selected (watcher will monitor Downloads folder).")
+            return ("", "browser")
         else:
-            print_error("Enter 1 or 2.")
+            print_error("Enter 1, 2, or 3.")
 
 
 # ---------------------------------------------------------------------------
@@ -615,6 +619,85 @@ def discover_gamma_paths() -> List[Dict[str, Any]]:
             })
 
     return found
+
+
+def get_windows_downloads_dir() -> str:
+    """Detect the current Windows user's Downloads folder, falling back to ~/Downloads."""
+    if _is_windows():
+        try:
+            import winreg
+            sub_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, sub_key) as key:
+                try:
+                    val, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+                    expanded = os.path.expandvars(val)
+                    if os.path.isdir(expanded):
+                        return expanded
+                except FileNotFoundError:
+                    val, _ = winreg.QueryValueEx(key, "{7D83EE9B-2244-4E70-B1F5-54E342E45351}")
+                    expanded = os.path.expandvars(val)
+                    if os.path.isdir(expanded):
+                        return expanded
+        except Exception:
+            pass
+    dl = os.path.join(os.path.expanduser("~"), "Downloads")
+    if os.path.isdir(dl):
+        return dl
+    return os.path.expanduser("~")
+
+
+def play_pda_cue() -> None:
+    """Play a classic high-tech S.T.A.L.K.E.R. PDA two-tone alert chime."""
+    if not _is_windows():
+        try:
+            print("\a", end="", flush=True)
+        except Exception:
+            pass
+        return
+    try:
+        import winsound
+        # High-tech double beep: 1800 Hz then 2400 Hz
+        winsound.Beep(1800, 110)
+        winsound.Beep(2400, 140)
+    except Exception:
+        try:
+            print("\a", end="", flush=True)
+        except Exception:
+            pass
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to system clipboard using native Windows clip.exe or fallback."""
+    if not text:
+        return False
+    try:
+        import subprocess
+        subprocess.run(["clip.exe"], input=text.encode("utf-8"), check=True)
+        return True
+    except Exception:
+        return False
+
+
+def fetch_latest_mods_txt(target_dir: str) -> Optional[str]:
+    """Fetch official G.A.M.M.A. modpack manifest from upstream GitHub repository."""
+    import urllib.request
+    urls = [
+        "https://raw.githubusercontent.com/Grokitach/Stalker_GAMMA/main/G.A.M.M.A/modpack_data/modpack_maker_list.txt",
+    ]
+    target_path = os.path.join(target_dir, "mods.txt")
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "gamma-stash"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
+                if len(data) > 1000:
+                    os.makedirs(target_dir, exist_ok=True)
+                    with open(target_path, "wb") as f:
+                        f.write(data)
+                    return target_path
+        except Exception:
+            continue
+    return None
 
 
 def locate_gamma_folder() -> Optional[str]:
@@ -1002,6 +1085,11 @@ def should_run_setup(config_path: str = "config.yaml") -> bool:
 
 def run_setup_wizard(gamma_dir: Optional[str] = None,
                      flaresolverr_url: Optional[str] = None,
+                     mode: Optional[str] = None,
+                     limit_rate: Optional[str] = None,
+                     no_sound: bool = False,
+                     category: Optional[str] = None,
+                     browser_dir: Optional[str] = None,
                      yes: bool = False) -> int:
     print_banner()
 
@@ -1009,9 +1097,14 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
     if not handle_dependencies():
         return 1
 
-    # Step 2: Flaresolverr
-    fs_mode = "manual"
-    if flaresolverr_url:
+    # Step 2: Flaresolverr / Bypass Strategy
+    fs_mode = mode or "manual"
+    fs_url = ""
+
+    if mode == "browser":
+        fs_mode = "browser"
+        print_ok("Strategy: Browser-Assisted Mode (Zero Docker)")
+    elif flaresolverr_url:
         fs_url = flaresolverr_url.rstrip("/") + ("/v1" if not flaresolverr_url.endswith("/v1") else "")
         ok, msg = validate_flaresolverr(fs_url)
         if not ok:
@@ -1020,12 +1113,14 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
                 return 1
         else:
             print_ok(f"Flaresolverr ready: {fs_url}")
+    elif mode == "docker":
+        fs_url = setup_docker_flaresolverr()
+        fs_mode = "docker"
     else:
         fs_result = configure_flaresolverr()
         if not fs_result:
             print()
-            print_error("Flaresolverr is required for ModDB downloads.")
-            print_info("Run this tool again when you have a Flaresolverr instance ready.")
+            print_error("A download strategy is required for ModDB downloads.")
             return 1
         fs_url, fs_mode = fs_result
 
@@ -1063,6 +1158,8 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
     if need_total == 0:
         print()
         print_ok("All mods already downloaded and verified.")
+        if not no_sound:
+            play_pda_cue()
         return 0
 
     print()
@@ -1087,9 +1184,16 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
         "destination": {
             "local_path": downloads_dir,
         },
+        "fs_mode": fs_mode,
+        "browser_downloads_dir": browser_dir or get_windows_downloads_dir(),
+        "limit_rate": limit_rate or "",
+        "category_filter": category or "",
     }
 
     result = run_download(config, skip_set)
+
+    if result == 0 and not no_sound:
+        play_pda_cue()
 
     if fs_mode == "docker" and not yes:
         print()
