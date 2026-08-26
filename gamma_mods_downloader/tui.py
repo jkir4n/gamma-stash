@@ -11,7 +11,8 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.screen import Screen, ModalScreen
-from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static, ProgressBar, DataTable
+from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static, ProgressBar, DataTable, SelectionList
+from textual.widgets.selection_list import Selection
 from textual.worker import Worker, WorkerState
 
 from . import __version__
@@ -23,7 +24,8 @@ from .setup import (
     _is_gamma_folder, _find_mods_txt, _find_downloads_folder,
     scan_modlist, cleanup_docker, _check_virtualization, _is_windows,
     discover_gamma_paths, check_disk_space,
-    get_windows_downloads_dir, play_pda_cue, copy_to_clipboard, fetch_latest_mods_txt,
+    get_windows_downloads_dir, play_pda_cue, play_pda_error_cue,
+    copy_to_clipboard, fetch_latest_mods_txt,
 )
 from .downloader import Downloader, open_in_browser, watch_browser_download, LinksFile
 
@@ -522,37 +524,50 @@ class CategorySelectScreen(BaseStashScreen):
         links = LinksFile(self.app.state["mods_path"])
         cats, entries_by_cat = links.read_with_categories()
 
-        widgets = [
-            Label("[bold #00ff41]Select Categories to Process:[/]\n[dim]Choose 'All Categories' or select a specific mod category to download.[/]\n")
-        ]
-        widgets.append(Button("★ All Categories (Full Modpack)", variant="primary", id="cat_all"))
+        items = []
         for i, c in enumerate(cats):
             cnt = len(entries_by_cat[i])
-            widgets.append(Button(f"{c} ({cnt} mods)", id=f"cat_{i}", variant="default"))
+            items.append(Selection(f"{c} ({cnt} mods)", c, True))
 
-        yield Container(ScrollableContainer(*widgets), id="content")
+        yield Container(
+            Label("[bold #00ff41]Select Categories to Process:[/]\n[dim]Toggle checkboxes with Space/Click to download specific categories, or proceed with All.[/]\n"),
+            SelectionList[str](*items, id="cat_list"),
+            id="content",
+        )
         yield Horizontal(
+            Button("Select All", id="sel_all_btn"),
+            Button("Deselect All", id="desel_all_btn"),
+            Button("Start Download", variant="primary", id="start_btn"),
             Button("Back", variant="default", id="back_btn"),
             id="buttons",
         )
         yield Footer()
 
-    @on(Button.Pressed)
-    def on_category_button(self, event: Button.Pressed) -> None:
-        btn_id = event.button.id or ""
-        if btn_id == "cat_all":
+    @on(Button.Pressed, "#sel_all_btn")
+    def on_select_all(self) -> None:
+        self.query_one("#cat_list", SelectionList).select_all()
+
+    @on(Button.Pressed, "#desel_all_btn")
+    def on_deselect_all(self) -> None:
+        self.query_one("#cat_list", SelectionList).deselect_all()
+
+    @on(Button.Pressed, "#start_btn")
+    def on_start(self) -> None:
+        sel = self.query_one("#cat_list", SelectionList).selected
+        if not sel:
+            self.notify("Please select at least one category to proceed.", severity="warning")
+            return
+        links = LinksFile(self.app.state["mods_path"])
+        cats, _ = links.read_with_categories()
+        if len(sel) == len(cats):
             self.app.state["selected_categories"] = None
-            self.app.push_screen(ScanScreen())
-        elif btn_id.startswith("cat_"):
-            idx = int(btn_id.split("_")[1])
-            links = LinksFile(self.app.state["mods_path"])
-            cats, _ = links.read_with_categories()
-            if 0 <= idx < len(cats):
-                selected_cat = cats[idx]
-                self.app.state["selected_categories"] = {selected_cat}
-                self.app.push_screen(ScanScreen())
-        elif btn_id == "back_btn":
-            self.app.pop_screen()
+        else:
+            self.app.state["selected_categories"] = set(sel)
+        self.app.push_screen(ScanScreen())
+
+    @on(Button.Pressed, "#back_btn")
+    def on_back(self) -> None:
+        self.app.pop_screen()
 
 
 class ScanScreen(BaseStashScreen):
@@ -860,6 +875,7 @@ class SummaryScreen(BaseStashScreen):
         buttons = []
         if fail > 0:
             buttons.append(Button("Retry Failed Mods", variant="warning", id="retry_btn"))
+            buttons.append(Button("Open Failure Report", variant="default", id="report_btn"))
         if self.app.state.get("fs_mode") == "docker":
             buttons.append(Button("Clean up Docker", variant="primary", id="cleanup_btn"))
         buttons.append(Button("Exit", variant="error", id="exit_btn"))
@@ -868,7 +884,22 @@ class SummaryScreen(BaseStashScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        play_pda_cue()
+        if getattr(self.app, "sound_enabled", True):
+            if self.results.get("fail", 0) > 0:
+                play_pda_error_cue()
+            else:
+                play_pda_cue()
+
+    @on(Button.Pressed, "#report_btn")
+    def on_open_report(self) -> None:
+        report = self.results.get("failed_report")
+        if not report:
+            dl_dir = self.app.state.get("downloads_dir", "")
+            report = os.path.join(dl_dir, "failed_mods.html")
+        if report and os.path.exists(report):
+            open_in_browser(report)
+        else:
+            self.notify("No failure report found.", severity="warning")
 
     @on(Button.Pressed, "#retry_btn")
     def on_retry(self) -> None:
@@ -978,6 +1009,12 @@ class StashApp(App):
         border: solid #1c2b1c;
         background: #060906;
     }
+    SelectionList {
+        height: 1fr;
+        margin: 1 0;
+        border: solid #1c2b1c;
+        background: #060906;
+    }
     RichLog {
         height: 8;
         margin: 1 0;
@@ -1001,10 +1038,12 @@ class StashApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("m", "toggle_sound", "Toggle Sound"),
     ]
 
     def __init__(self):
         super().__init__()
+        self.sound_enabled: bool = True
         self.state: Dict[str, Any] = {
             "fs_url": "",
             "fs_mode": "",
@@ -1016,6 +1055,11 @@ class StashApp(App):
             "scan_stats": {},
             "selected_categories": None,
         }
+
+    def action_toggle_sound(self) -> None:
+        self.sound_enabled = not getattr(self, "sound_enabled", True)
+        status = "ENABLED 🔔" if self.sound_enabled else "MUTED 🔕"
+        self.notify(f"PDA Audio {status}", timeout=2.0)
 
     def on_mount(self) -> None:
         self.register_theme(_make_gamma_theme())

@@ -666,6 +666,24 @@ def play_pda_cue() -> None:
             pass
 
 
+def play_pda_error_cue() -> None:
+    """Play a short low-pitch S.T.A.L.K.E.R. PDA error / warning audio alert."""
+    if not _is_windows():
+        try:
+            print("\a", end="", flush=True)
+        except Exception:
+            pass
+        return
+    try:
+        import winsound
+        winsound.Beep(450, 180)
+    except Exception:
+        try:
+            print("\a", end="", flush=True)
+        except Exception:
+            pass
+
+
 def copy_to_clipboard(text: str) -> bool:
     """Copy text to system clipboard using native Windows clip.exe or fallback."""
     if not text:
@@ -698,6 +716,188 @@ def fetch_latest_mods_txt(target_dir: str) -> Optional[str]:
         except Exception:
             continue
     return None
+
+
+def inspect_modlist_diff(local_mods_path: str, remote_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Compares local mods.txt with upstream GitHub manifest.
+    Returns categorized changes:
+      - 'added': mods present in remote but missing locally
+      - 'updated': mods in both where URL or MD5 changed
+      - 'removed': mods present locally but removed upstream
+      - 'unchanged': mods with matching filename, url, and md5
+    """
+    import tempfile
+    import urllib.request
+
+    url = remote_url or "https://raw.githubusercontent.com/Grokitach/Stalker_GAMMA/main/G.A.M.M.A/modpack_data/modpack_maker_list.txt"
+
+    with tempfile.NamedTemporaryFile("wb", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "gamma-stash"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+            if len(data) < 100:
+                return None
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+
+        from .downloader import LinksFile
+        local_entries = {e["filename"]: e for e in LinksFile(local_mods_path).read()}
+        remote_entries = {e["filename"]: e for e in LinksFile(tmp_path).read()}
+
+        added = []
+        updated = []
+        unchanged = []
+        removed = []
+
+        for fn, r_entry in remote_entries.items():
+            if fn not in local_entries:
+                added.append(r_entry)
+            else:
+                l_entry = local_entries[fn]
+                if l_entry.get("expected_md5") != r_entry.get("expected_md5") or l_entry.get("url") != r_entry.get("url"):
+                    updated.append({"local": l_entry, "remote": r_entry, "filename": fn})
+                else:
+                    unchanged.append(r_entry)
+
+        for fn, l_entry in local_entries.items():
+            if fn not in remote_entries:
+                removed.append(l_entry)
+
+        return {
+            "added": added,
+            "updated": updated,
+            "removed": removed,
+            "unchanged": unchanged,
+            "total_local": len(local_entries),
+            "total_remote": len(remote_entries),
+            "remote_path": tmp_path,
+        }
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        return None
+
+
+def run_diff_command(gamma_dir: Optional[str] = None,
+                     download_delta: bool = False,
+                     yes: bool = False) -> int:
+    """Run G.A.M.M.A. Update Inspector / Diff comparing local mods.txt against GitHub."""
+    print(f"\n  {BOLD}{GREEN}G.A.M.M.A. STASH — Update Inspector & Diff{RESET}")
+    print(f"  {DIM}Comparing local mods.txt with upstream Grokitach/Stalker_GAMMA ...{RESET}")
+    print_divider()
+
+    mods_path = None
+    if gamma_dir:
+        expanded = os.path.expandvars(os.path.expanduser(gamma_dir.strip('"')))
+        mods_path = _find_mods_txt(expanded)
+    else:
+        discovered = discover_gamma_paths()
+        if discovered:
+            mods_path = discovered[0]["mods_txt"]
+
+    if not mods_path or not os.path.isfile(mods_path):
+        print_error("Could not locate local mods.txt. Specify with --gamma-dir <PATH>")
+        return 1
+
+    print_field("Local manifest", mods_path)
+    spinner = Spinner("Fetching latest upstream manifest from GitHub ...")
+    spinner.start()
+    diff = inspect_modlist_diff(mods_path)
+    if not diff:
+        spinner.fail("Failed to fetch or parse upstream manifest from GitHub")
+        return 1
+    spinner.stop("OK")
+
+    added = diff["added"]
+    updated = diff["updated"]
+    removed = diff["removed"]
+    unchanged = diff["unchanged"]
+
+    print()
+    print_field("Local mods total", str(diff["total_local"]))
+    print_field("Upstream mods total", str(diff["total_remote"]))
+    print()
+
+    if not added and not updated and not removed:
+        print_ok("Your local mods.txt is completely in sync with upstream G.A.M.M.A.!")
+        return 0
+
+    if added:
+        print(f"  {GREEN}{BOLD}🟢 New Mods Added ({len(added)}):{RESET}")
+        for item in added[:15]:
+            cat = item.get("category", "")
+            cat_str = f"[{cat}] " if cat else ""
+            print(f"    + {WHITE}{item['filename']}{RESET}  {DIM}{cat_str}{item.get('description', '')[:40]}{RESET}")
+        if len(added) > 15:
+            print(f"    {DIM}... and {len(added) - 15} more new mods{RESET}")
+        print()
+
+    if updated:
+        print(f"  {AMBER}{BOLD}🟡 Updated Mods / Hash Changes ({len(updated)}):{RESET}")
+        for item in updated[:15]:
+            fn = item["filename"]
+            old_md5 = item["local"].get("expected_md5", "")[:8]
+            new_md5 = item["remote"].get("expected_md5", "")[:8]
+            print(f"    ~ {WHITE}{fn}{RESET}  {DIM}(MD5: {old_md5}... -> {new_md5}...){RESET}")
+        if len(updated) > 15:
+            print(f"    {DIM}... and {len(updated) - 15} more updated mods{RESET}")
+        print()
+
+    if removed:
+        print(f"  {RED}{BOLD}🔴 Deprecated / Removed Upstream ({len(removed)}):{RESET}")
+        for item in removed[:10]:
+            print(f"    - {GRAY}{item['filename']}{RESET}")
+        if len(removed) > 10:
+            print(f"    {DIM}... and {len(removed) - 10} more deprecated mods{RESET}")
+        print()
+
+    delta_count = len(added) + len(updated)
+    if delta_count > 0:
+        print_info(f"Total delta for this update: {delta_count} mods.")
+        should_dl = download_delta or (not yes and _prompt_yes_no(f"Download the {delta_count} updated/new mods now?"))
+        if should_dl:
+            remote_path = diff.get("remote_path")
+            if remote_path and os.path.exists(remote_path):
+                import shutil
+                shutil.copy2(remote_path, mods_path)
+                print_ok(f"Updated {mods_path} to latest upstream manifest.")
+
+            delta_filenames = frozenset([e["filename"] for e in added] + [e["filename"] for e in updated])
+            dl_folder = _find_downloads_folder(mods_path)
+            config = {
+                "links_file": mods_path,
+                "download_dir": dl_folder,
+                "download_delay": 1,
+                "max_concurrent": 3,
+                "flaresolverr": {"url": "http://localhost:8191/v1", "timeout_ms": 60000},
+                "destination": {"local_path": dl_folder},
+                "fs_mode": "browser",
+                "browser_downloads_dir": get_windows_downloads_dir(),
+            }
+            from .downloader import Downloader, LinksFile
+            all_entries = LinksFile(mods_path).read()
+            all_filenames = frozenset(e["filename"] for e in all_entries)
+            skip_non_delta = all_filenames - delta_filenames
+
+            d = Downloader(config)
+            res = d.download_all(skip_non_delta)
+            if res.get("fail", 0) == 0:
+                play_pda_cue()
+                print_ok(f"Successfully downloaded all {delta_count} update mods!")
+                return 0
+            else:
+                play_pda_error_cue()
+                print_warn(f"{res.get('fail', 0)} mods failed during update.")
+                return 1
+
+    return 0
 
 
 def locate_gamma_folder() -> Optional[str]:
@@ -1090,6 +1290,8 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
                      no_sound: bool = False,
                      category: Optional[str] = None,
                      browser_dir: Optional[str] = None,
+                     retry_failed: bool = False,
+                     verify_archives: bool = False,
                      yes: bool = False) -> int:
     print_banner()
 
@@ -1149,28 +1351,45 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
     if not has_space:
         print_warn(f"Low disk space! Drive has {free_gb:.1f} GB free (25+ GB recommended).")
 
-    # Step 4: Scan modlist
-    stats = scan_modlist(mods_path, downloads_dir)
-    if stats is None:
-        return 1
+    # Step 4: Scan modlist (or skip to retry_failed)
+    failed_cache_path = os.path.join(downloads_dir, ".stash_failed.json")
+    if retry_failed and os.path.isfile(failed_cache_path):
+        import json
+        try:
+            with open(failed_cache_path, "r", encoding="utf-8") as f:
+                failed_items = json.load(f)
+            failed_fns = frozenset(e.get("filename") for e in failed_items if e.get("filename"))
+            from .downloader import LinksFile
+            all_entries = LinksFile(mods_path).read()
+            all_fns = frozenset(e["filename"] for e in all_entries)
+            skip_set = all_fns - failed_fns
+            need_total = len(failed_fns)
+            print_info(f"Retrying {need_total} failed mods from previous session...")
+        except Exception:
+            retry_failed = False
 
-    need_total = stats["need_download"] + stats["need_redownload"]
-    if need_total == 0:
+    if not retry_failed:
+        stats = scan_modlist(mods_path, downloads_dir)
+        if stats is None:
+            return 1
+
+        need_total = stats["need_download"] + stats["need_redownload"]
+        if need_total == 0:
+            print()
+            print_ok("All mods already downloaded and verified.")
+            if not no_sound:
+                play_pda_cue()
+            return 0
+
         print()
-        print_ok("All mods already downloaded and verified.")
-        if not no_sound:
-            play_pda_cue()
-        return 0
+        print_info(f"{need_total} mods need downloading ({GREEN}{stats['already_ok']} already OK{RESET}).")
+        if not yes and not _prompt_yes_no("Start downloading now?"):
+            return 0
 
-    print()
-    print_info(f"{need_total} mods need downloading ({GREEN}{stats['already_ok']} already OK{RESET}).")
-    if not yes and not _prompt_yes_no("Start downloading now?"):
-        return 0
+        skip_set = frozenset(stats.get("ok_filenames", []))
 
     # Step 5: Download
     print_divider()
-
-    skip_set = frozenset(stats.get("ok_filenames", []))
 
     config = {
         "links_file": mods_path,
@@ -1188,12 +1407,15 @@ def run_setup_wizard(gamma_dir: Optional[str] = None,
         "browser_downloads_dir": browser_dir or get_windows_downloads_dir(),
         "limit_rate": limit_rate or "",
         "category_filter": category or "",
+        "verify_archives": verify_archives,
     }
 
     result = run_download(config, skip_set)
 
     if result == 0 and not no_sound:
         play_pda_cue()
+    elif result != 0 and not no_sound:
+        play_pda_error_cue()
 
     if fs_mode == "docker" and not yes:
         print()

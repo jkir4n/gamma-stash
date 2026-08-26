@@ -12,7 +12,11 @@ import argparse
 import sys
 from typing import List, Optional
 
-from .setup import run_setup_wizard, cleanup_docker, fetch_latest_mods_txt
+from .setup import (
+    run_setup_wizard, cleanup_docker, fetch_latest_mods_txt,
+    run_diff_command,
+)
+from .doctor import run_doctor
 from .terminal import (
     RED, RESET, print_ok, print_error,
 )
@@ -37,6 +41,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
         no_sound=getattr(args, "no_sound", False),
         category=getattr(args, "category", None),
         browser_dir=getattr(args, "browser_dir", None),
+        retry_failed=getattr(args, "retry_failed", False),
+        verify_archives=getattr(args, "verify_archives", False),
         yes=getattr(args, "yes", False),
     )
 
@@ -44,6 +50,21 @@ def cmd_setup(args: argparse.Namespace) -> int:
 def cmd_cleanup(args: argparse.Namespace) -> int:
     cleanup_docker(interactive=not getattr(args, "yes", False))
     return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    return run_doctor(
+        gamma_dir=getattr(args, "gamma_dir", None),
+        flaresolverr_url=getattr(args, "flaresolverr_url", None),
+    )
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    return run_diff_command(
+        gamma_dir=getattr(args, "gamma_dir", None),
+        download_delta=getattr(args, "download_delta", False),
+        yes=getattr(args, "yes", False),
+    )
 
 
 def _default_flow_tui() -> int:
@@ -76,6 +97,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Mute S.T.A.L.K.E.R. PDA completion chime")
     parser.add_argument("--update-manifest", action="store_true",
                         help="Download latest official mods.txt from GitHub before scanning")
+    parser.add_argument("--verify-archives", action="store_true",
+                        help="Verify archive integrity (.zip, .7z) before completing")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Retry only failed mods from previous session (.stash_failed.json)")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Automatic yes to prompts; run unattended")
     sub = parser.add_subparsers(dest="command")
@@ -97,6 +122,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                          help="Mute S.T.A.L.K.E.R. PDA completion chime")
     p_setup.add_argument("--update-manifest", action="store_true",
                          help="Download latest official mods.txt from GitHub before scanning")
+    p_setup.add_argument("--verify-archives", action="store_true",
+                         help="Verify archive integrity (.zip, .7z) before completing")
+    p_setup.add_argument("--retry-failed", action="store_true",
+                         help="Retry only failed mods from previous session (.stash_failed.json)")
     p_setup.add_argument("-y", "--yes", action="store_true",
                          help="Automatic yes to prompts; run unattended")
     p_setup.set_defaults(func=cmd_setup)
@@ -105,6 +134,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_clean.add_argument("-y", "--yes", action="store_true",
                          help="Automatic yes to prompts; run unattended")
     p_clean.set_defaults(func=cmd_cleanup)
+
+    p_doctor = sub.add_parser("doctor", help="Run automated environment and network diagnostics")
+    p_doctor.add_argument("--gamma-dir", type=str, default=None,
+                          help="Path to GAMMA installation folder")
+    p_doctor.add_argument("--flaresolverr-url", type=str, default=None,
+                          help="URL of Flaresolverr instance (e.g. http://localhost:8191)")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    p_diff = sub.add_parser("diff", help="Compare local mods.txt against latest upstream G.A.M.M.A. update")
+    p_diff.add_argument("--gamma-dir", type=str, default=None,
+                        help="Path to GAMMA installation folder")
+    p_diff.add_argument("--download-delta", action="store_true",
+                        help="Immediately download new and updated mods from the diff")
+    p_diff.add_argument("-y", "--yes", action="store_true",
+                        help="Automatic yes to prompts; run unattended")
+    p_diff.set_defaults(func=cmd_diff)
 
     try:
         parsed = parser.parse_args(args=argv)

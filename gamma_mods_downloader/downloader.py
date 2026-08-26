@@ -263,6 +263,135 @@ def watch_browser_download(filename: str,
     return False
 
 
+def verify_archive_integrity(path: str) -> Tuple[bool, str]:
+    """Test integrity of downloaded .zip, .7z, or .rar archive before MO2 extracts it."""
+    if not os.path.isfile(path) or os.path.getsize(path) < 100:
+        return False, "File is missing or too small (< 100 bytes)"
+
+    lower = path.lower()
+    if lower.endswith(".zip"):
+        import zipfile
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                bad = zf.testzip()
+                if bad is not None:
+                    return False, f"Corrupted file in zip: {bad}"
+            return True, "Valid ZIP archive"
+        except Exception as e:
+            return False, f"ZIP corruption: {e}"
+
+    if lower.endswith(".tar") or lower.endswith(".tar.gz") or lower.endswith(".tgz"):
+        import tarfile
+        try:
+            if tarfile.is_tarfile(path):
+                return True, "Valid TAR archive"
+            return False, "Not a valid TAR archive"
+        except Exception as e:
+            return False, f"TAR corruption: {e}"
+
+    # For 7z / rar archives: check magic headers
+    try:
+        with open(path, "rb") as f:
+            header = f.read(16)
+        if lower.endswith(".7z"):
+            if header.startswith(b"7z\xbc\xaf'\x1c"):
+                return True, "Valid 7z header"
+            return False, "Invalid 7z magic signature"
+        elif lower.endswith(".rar"):
+            if header.startswith(b"Rar!\x1a\x07"):
+                return True, "Valid RAR header"
+            return False, "Invalid RAR magic signature"
+    except Exception as e:
+        return False, f"Header inspection error: {e}"
+
+    return True, "Archive verified"
+
+
+def export_failed_report(failed_entries: List[Dict[str, Any]], target_dir: str) -> str:
+    """
+    Exports .stash_failed.json (for CLI --retry-failed) and an interactive
+    S.T.A.L.K.E.R. dark-themed failed_mods.html report with direct links.
+    """
+    if not failed_entries:
+        return ""
+
+    json_path = os.path.join(target_dir, ".stash_failed.json")
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(failed_entries, f, indent=2)
+    except Exception:
+        pass
+
+    html_path = os.path.join(target_dir, "failed_mods.html")
+    rows = []
+    for e in failed_entries:
+        fn = e.get("filename", "Unknown")
+        cat = e.get("category", "General")
+        err = e.get("error", "Download failed")
+        url = e.get("moddb_page") or e.get("url", "")
+        md5 = e.get("expected_md5", "")
+        author = e.get("author", "")
+
+        rows.append(f"""
+        <tr>
+            <td class="fn"><strong>{fn}</strong><br><span class="desc">{author}</span></td>
+            <td><span class="badge badge-cat">{cat}</span></td>
+            <td><code>{md5[:16]}...</code></td>
+            <td class="err">{err}</td>
+            <td><a href="{url}" target="_blank" class="btn">Open in Browser</a></td>
+        </tr>
+        """)
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>G.A.M.M.A. STASH — Failed Downloads Report</title>
+<style>
+    body {{ background: #060906; color: #d4edd4; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 2rem; }}
+    h1 {{ color: #00ff41; border-bottom: 2px solid #1c2b1c; padding-bottom: 0.5rem; }}
+    .subtitle {{ color: #88aa88; margin-top: -0.5rem; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 1.5rem; background: #0d140d; }}
+    th, td {{ padding: 0.8rem 1rem; border: 1px solid #1c2b1c; text-align: left; }}
+    th {{ background: #131c13; color: #00ff41; font-weight: 600; }}
+    tr:hover {{ background: #152215; }}
+    .fn {{ color: #ffb000; }}
+    .desc {{ color: #668866; font-size: 0.85rem; }}
+    .err {{ color: #ff5555; font-size: 0.9rem; }}
+    .badge {{ padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.8rem; background: #223322; color: #88cc88; }}
+    .btn {{ display: inline-block; background: #00ff41; color: #060906; text-decoration: none; padding: 0.4rem 0.8rem; font-weight: bold; border-radius: 3px; font-size: 0.85rem; }}
+    .btn:hover {{ background: #33ff66; }}
+    code {{ background: #111; padding: 0.1rem 0.3rem; border-radius: 2px; color: #aaa; }}
+</style>
+</head>
+<body>
+<h1>☢ G.A.M.M.A. STASH — Failed Downloads Report</h1>
+<p class="subtitle">{len(failed_entries)} mod(s) encountered download or verification issues. Click any button below to download manually via your browser.</p>
+<table>
+<thead>
+<tr>
+    <th>Mod / Archive</th>
+    <th>Category</th>
+    <th>Expected MD5</th>
+    <th>Error Reason</th>
+    <th>Action</th>
+</tr>
+</thead>
+<tbody>
+{''.join(rows)}
+</tbody>
+</table>
+</body>
+</html>"""
+
+    try:
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        return html_path
+    except Exception:
+        return ""
+
+
 class LinksFile:
     """Manages GAMMA's mods.txt file -- tab-separated, with category headers."""
 
@@ -336,6 +465,7 @@ class Downloader:
         self.limit_rate = config.get("limit_rate", "")
         self.category_filter = config.get("category_filter", "")
         self.selected_categories = config.get("selected_categories", None)
+        self.verify_archives = config.get("verify_archives", False)
         self.log_callback = log_callback
         self.progress_callback = progress_callback
         self.on_event = on_event
@@ -524,6 +654,17 @@ class Downloader:
                     }
                 except Exception:
                     pass
+
+            if self.verify_archives:
+                v_ok, v_msg = verify_archive_integrity(local_path)
+                if not v_ok:
+                    self._log_error(f"Archive integrity failed for {filename}: {v_msg}")
+                    entry["error"] = f"Corrupt archive: {v_msg}"
+                    try:
+                        os.remove(local_path)
+                    except Exception:
+                        pass
+                    continue
 
             if self._copy_to_destination(local_path, filename):
                 entry["status"] = "DOWNLOADED"
@@ -778,6 +919,7 @@ class Downloader:
         moddb_mods = [e for e in pending if e.get("source") != "GITHUB"]
 
         completed_count = 0
+        failed_entries: List[Dict[str, Any]] = []
 
         def run_single(entry):
             nonlocal success, fail, completed_count
@@ -788,6 +930,7 @@ class Downloader:
                     success += 1
                 else:
                     fail += 1
+                    failed_entries.append(entry)
                 if self.progress_callback:
                     self.progress_callback(completed_count, total, entry["filename"])
                 self._emit("overall_progress", {
@@ -822,12 +965,22 @@ class Downloader:
 
         save_hash_cache(self.download_dir, self.cache)
 
+        report_path = ""
+        if failed_entries:
+            report_path = export_failed_report(failed_entries, self.download_dir)
+            if report_path:
+                self._log_warn(f"Failure report generated: {report_path}")
+            self._emit("batch_failed_report", {"path": report_path, "count": len(failed_entries)})
+
         if not self.log_callback:
             print_divider()
             ok_str = f"{GREEN}{success} OK{RESET}"
             fail_str = f"{RED}{fail} FAIL{RESET}" if fail > 0 else ""
             print(f"\n  {BOLD}Done:{RESET} {ok_str}  {fail_str}  {GRAY}of {total}{RESET}\n")
+            if report_path:
+                print(f"  {AMBER}Failure report saved to:{RESET} {WHITE}{report_path}{RESET}")
+                print(f"  {DIM}Retry later with: gamma-stash setup --retry-failed{RESET}\n")
         else:
             self._log(f"Downloads completed: {success} OK, {fail} FAIL of {total}")
 
-        return {"success": success, "fail": fail, "total_pending": total}
+        return {"success": success, "fail": fail, "total_pending": total, "failed_report": report_path}

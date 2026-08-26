@@ -45,6 +45,11 @@ Double-click `gamma-stash.exe` — the setup wizard walks you through everything
 ```
 gamma-stash                                 Launch the TUI wizard (default)
 gamma-stash setup                           Run the CLI wizard (no TUI)
+gamma-stash doctor                          Run automated system & network health diagnostics
+gamma-stash diff                            Inspect updates: compare local vs upstream G.A.M.M.A.
+gamma-stash diff --download-delta           Download only new and updated patch mods
+gamma-stash setup --retry-failed            Retry only failed mods from previous session
+gamma-stash setup --verify-archives         Verify zip/7z archive integrity before completing
 gamma-stash --cli                           Force CLI mode for default flow
 gamma-stash setup --gamma-dir "D:\GAMMA"    Specify GAMMA folder directly
 gamma-stash setup --mode browser            Use Browser-Assisted mode (Zero Docker)
@@ -62,6 +67,11 @@ gamma-stash --help                          Show help
 
 | Flag | Description |
 |---|---|
+| `doctor` | Sanity check for `curl`, GitHub latency, ModDB Cloudflare IP blocks, and subsystems |
+| `diff` | Update Inspector comparing local `mods.txt` with upstream `Grokitach/Stalker_GAMMA` |
+| `--download-delta` | (With `diff`) Download only new or modified mods from the update |
+| `--retry-failed` | Resumes only previously failed mods from `.stash_failed.json` |
+| `--verify-archives` | Performs integrity and header checks on downloaded `.zip`, `.7z`, and `.rar` files |
 | `--mode {docker,manual,browser}` | Bypass strategy: `browser` (Zero-Docker watcher), `docker` (auto-launch), or `manual` (remote IP) |
 | `--gamma-dir PATH` | Direct path to your G.A.M.M.A. installation folder |
 | `--limit-rate SPEED` | Throttle download rate per stream (e.g. `5M`, `500K`, `10M`) |
@@ -78,7 +88,9 @@ gamma-stash --help                          Show help
 |---|---|
 | <kbd>/</kbd> | Focus the live search input in the download table |
 | <kbd>Enter</kbd> / Click | Open **Mod Actions Modal** for the selected mod (Open in Browser, Copy Link, Retry) |
+| <kbd>M</kbd> | Toggle S.T.A.L.K.E.R. PDA sound cues (Mute / Unmute) |
 | <kbd>L</kbd> | Toggle active log panel display |
+| <kbd>Space</kbd> | Toggle category checkboxes in Category Selection screen |
 | <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> | Navigate between buttons and table |
 | <kbd>q</kbd> | Quit application |
 
@@ -168,6 +180,7 @@ python scripts/generate_icon.py
 gamma_mods_downloader/
 ├── cli.py                      CLI entry point + commands
 ├── tui.py                      Screen-based Textual TUI & modals
+├── doctor.py                   System & network environment diagnostics
 ├── setup.py                    Interactive setup wizard + audio cues
 ├── terminal.py                 STALKER-themed colors, spinners, progress bars
 ├── downloader.py               Mods.txt parser + parallel chunk downloader + watcher
