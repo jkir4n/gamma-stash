@@ -537,7 +537,7 @@ class CategorySelectScreen(BaseStashScreen):
         yield Horizontal(
             Button("Select All", id="sel_all_btn"),
             Button("Deselect All", id="desel_all_btn"),
-            Button("Start Download", variant="primary", id="start_btn"),
+            Button("Scan & Verify", variant="primary", id="start_btn"),
             Button("Back", variant="default", id="back_btn"),
             id="buttons",
         )
