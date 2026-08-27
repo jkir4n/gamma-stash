@@ -36,9 +36,10 @@ Double-click `gamma-stash.exe` — the setup wizard walks you through everything
 2. **Strategy selection** — choose **Browser-Assisted (Zero Docker)**, **Docker Auto-Launch**, or **Remote IP**
 3. **Locate GAMMA** — auto-detects installation paths or lets you enter a custom folder (or fetch `mods.txt` from GitHub)
 4. **Category selection** — download the entire modpack or select specific categories
-5. **Scan modlist** — fast cached MD5 verification shows missing or corrupted mods
-6. **Download** — high-speed concurrent batch downloading with multi-segment acceleration and resume support
-7. **Done** — S.T.A.L.K.E.R. PDA audio alert signals completion!
+5. **Scan & Verify** — audits existing files against cryptographic MD5 hashes; detects missing, outdated, or corrupted archives
+6. **Pre-Download Review** — inspect the scan summary (Verified vs Missing vs Outdated) with full control to proceed or cancel
+7. **Download** — high-speed concurrent batch downloading with multi-segment acceleration and resume support
+8. **Done** — S.T.A.L.K.E.R. PDA audio alert signals completion!
 
 ### Command Line
 
@@ -105,6 +106,20 @@ gamma-stash --help                          Show help
    - Fully automated headless bypass of Cloudflare challenges without user interaction.
 3. **Remote / Existing IP Mode**
    - Connects to an existing Flaresolverr instance running on your LAN or home server (e.g. `http://192.168.1.50:8191/v1`).
+
+## Mod Verification & Version Control
+
+G.A.M.M.A. STASH guarantees that your local downloads folder matches the **exact version** of every mod specified in `mods.txt`.
+
+### How Version Checking Works
+Rather than relying solely on file names or version strings (which modders frequently change or omit), G.A.M.M.A.'s manifest contains a 32-character cryptographic **MD5 checksum** for every file.
+
+1. **Pre-Download Audit**: When you click **Scan & Verify**, STASH inspects your `GAMMA/downloads/` folder and verifies every existing archive's MD5 checksum against `mods.txt`.
+2. **Exact Version Match**: Archives that match are marked `[OK] Verified & Ready` and placed on the skip list — saving bandwidth and avoiding unnecessary downloads.
+3. **Outdated / Corrupted Archives**: If a file exists on disk with an outdated hash, STASH marks it as `Corrupted / Need Re-download` and automatically queues it for update.
+4. **Sub-Second Caching**: Verification results are cached in `.stash_cache.json` indexed by file size and modification timestamp, enabling sub-second rescans across 40+ GB of archives.
+5. **Pre-Download Gate**: STASH stops at the **Scan Summary Screen** and displays the exact audit tally before transferring any data. You choose `[ Download X Mods ]` to proceed or `[ Back ]` / `[ Cancel ]` to abort.
+6. **Update Inspector (`gamma-stash diff`)**: Compare local `mods.txt` directly with upstream GitHub releases to inspect added, updated, or removed mods, and download only the patch delta with `--download-delta`.
 
 ## Requirements
 
